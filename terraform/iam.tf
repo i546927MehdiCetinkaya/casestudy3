@@ -111,6 +111,8 @@ resource "google_iam_workload_identity_pool_provider" "github_provider" {
 }
 
 # IAM binding to allow GitHub Actions to impersonate the service account
+# Note: Repository path is hardcoded for this case study (i546927MehdiCetinkaya/casestudy3)
+# For production or reusable modules, move to a variable
 resource "google_service_account_iam_member" "github_actions_workload_identity" {
   service_account_id = google_service_account.github_actions.name
   role               = "roles/iam.workloadIdentityUser"

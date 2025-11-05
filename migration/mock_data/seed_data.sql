@@ -1,6 +1,10 @@
 -- Seed Data for HR Database
 -- Case Study 3 - Mock Employee Data (GDPR-compliant)
 -- 50+ employees across 4 departments
+--
+-- NOTE: SSN encryption uses base64 encoding for mock data demonstration.
+-- Production systems MUST use proper encryption (pgp_sym_encrypt() or Google Cloud KMS)
+-- for GDPR compliance. This is acceptable for case study purposes only.
 
 -- Insert Departments first
 INSERT INTO departments (name, budget, location) VALUES
