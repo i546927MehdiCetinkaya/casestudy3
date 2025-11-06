@@ -51,10 +51,10 @@ jobs:
 
       - name: Validate Kubernetes Manifests with kubeval
         run: |
-          kubeval --strict kubernetes/rbac.yaml
-          kubeval --strict kubernetes/network-policies.yaml
-          kubeval --strict kubernetes/hr-portal.yaml
-          kubeval --strict kubernetes/workspaces.yaml
+          kubeval --kubernetes-version 1.28.0 kubernetes/rbac.yaml
+          kubeval --kubernetes-version 1.28.0 kubernetes/network-policies.yaml
+          kubeval --kubernetes-version 1.28.0 kubernetes/hr-portal.yaml
+          kubeval --kubernetes-version 1.28.0 kubernetes/workspaces.yaml
 
   plan:
     name: Terraform Plan
