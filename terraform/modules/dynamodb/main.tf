@@ -1,10 +1,10 @@
 # DynamoDB Table for Employee Data
 
 resource "aws_dynamodb_table" "employees" {
-  name           = var.table_name
-  billing_mode   = "PAY_PER_REQUEST"
-  hash_key       = "employeeId"
-  
+  name         = var.table_name
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "employeeId"
+
   attribute {
     name = "employeeId"
     type = "S"
@@ -48,10 +48,10 @@ resource "aws_dynamodb_table" "employees" {
 
 # DynamoDB Table for Workspace Metadata
 resource "aws_dynamodb_table" "workspaces" {
-  name           = "${var.table_name}-workspaces"
-  billing_mode   = "PAY_PER_REQUEST"
-  hash_key       = "workspaceId"
-  
+  name         = "${var.table_name}-workspaces"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "workspaceId"
+
   attribute {
     name = "workspaceId"
     type = "S"

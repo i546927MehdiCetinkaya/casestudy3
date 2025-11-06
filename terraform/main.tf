@@ -4,7 +4,7 @@
 
 terraform {
   required_version = ">= 1.0"
-  
+
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -45,12 +45,12 @@ data "aws_availability_zones" "available" {
 
 # Data source for EKS authentication
 data "aws_eks_cluster" "cluster" {
-  name = module.eks.cluster_name
+  name       = module.eks.cluster_name
   depends_on = [module.eks]
 }
 
 data "aws_eks_cluster_auth" "cluster" {
-  name = module.eks.cluster_name
+  name       = module.eks.cluster_name
   depends_on = [module.eks]
 }
 
@@ -64,21 +64,21 @@ provider "kubernetes" {
 module "vpc" {
   source = "./modules/vpc"
 
-  cluster_name        = var.cluster_name
-  vpc_cidr            = var.vpc_cidr
-  availability_zones  = slice(data.aws_availability_zones.available.names, 0, 3)
-  environment         = var.environment
+  cluster_name       = var.cluster_name
+  vpc_cidr           = var.vpc_cidr
+  availability_zones = slice(data.aws_availability_zones.available.names, 0, 3)
+  environment        = var.environment
 }
 
 # EKS Module
 module "eks" {
   source = "./modules/eks"
 
-  cluster_name        = var.cluster_name
-  cluster_version     = var.cluster_version
-  vpc_id              = module.vpc.vpc_id
-  private_subnet_ids  = module.vpc.private_subnet_ids
-  environment         = var.environment
+  cluster_name       = var.cluster_name
+  cluster_version    = var.cluster_version
+  vpc_id             = module.vpc.vpc_id
+  private_subnet_ids = module.vpc.private_subnet_ids
+  environment        = var.environment
 
   depends_on = [module.vpc]
 }
@@ -95,10 +95,10 @@ module "dynamodb" {
 module "vpc_endpoints" {
   source = "./modules/vpc-endpoints"
 
-  vpc_id              = module.vpc.vpc_id
-  private_subnet_ids  = module.vpc.private_subnet_ids
-  route_table_ids     = module.vpc.private_route_table_ids
-  environment         = var.environment
+  vpc_id             = module.vpc.vpc_id
+  private_subnet_ids = module.vpc.private_subnet_ids
+  route_table_ids    = module.vpc.private_route_table_ids
+  environment        = var.environment
 
   depends_on = [module.vpc]
 }
@@ -107,11 +107,11 @@ module "vpc_endpoints" {
 module "iam" {
   source = "./modules/iam"
 
-  cluster_name    = var.cluster_name
-  eks_oidc_issuer = module.eks.oidc_issuer
-  eks_oidc_arn    = module.eks.oidc_provider_arn
+  cluster_name       = var.cluster_name
+  eks_oidc_issuer    = module.eks.oidc_issuer
+  eks_oidc_arn       = module.eks.oidc_provider_arn
   dynamodb_table_arn = module.dynamodb.table_arn
-  environment     = var.environment
+  environment        = var.environment
 
   depends_on = [module.eks, module.dynamodb]
 }

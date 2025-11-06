@@ -19,6 +19,9 @@ jobs:
   validate:
     name: Validate Configuration
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -56,6 +59,9 @@ jobs:
     name: Terraform Plan
     needs: validate
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
     outputs:
       plan_exitcode: ${{ steps.plan.outputs.exitcode }}
     steps:
@@ -65,9 +71,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          role-to-assume: arn:aws:iam::920120424621:role/githubrepo
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Setup Terraform
@@ -120,6 +124,9 @@ jobs:
     name: Deploy Terraform Infrastructure
     needs: [plan]
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
     outputs:
       cluster_name: ${{ steps.output.outputs.cluster_name }}
     steps:
@@ -129,9 +136,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          role-to-assume: arn:aws:iam::920120424621:role/githubrepo
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Setup Terraform
@@ -176,6 +181,9 @@ jobs:
     name: Deploy Kubernetes Resources
     needs: deploy-infrastructure
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -183,9 +191,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          role-to-assume: arn:aws:iam::920120424621:role/githubrepo
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Setup kubectl
@@ -235,6 +241,9 @@ jobs:
     name: Build and Push Container Images
     needs: deploy-infrastructure
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
     strategy:
       matrix:
         image:
@@ -249,9 +258,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          role-to-assume: arn:aws:iam::920120424621:role/githubrepo
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
@@ -283,6 +290,9 @@ jobs:
     name: Post-Deployment Tests
     needs: [deploy-kubernetes, build-images]
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -290,9 +300,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          role-to-assume: arn:aws:iam::920120424621:role/githubrepo
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Setup kubectl

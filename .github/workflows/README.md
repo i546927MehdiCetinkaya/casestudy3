@@ -71,19 +71,39 @@ This directory contains GitHub Actions workflows for automating the deployment, 
 
 ## Setup Instructions
 
-### 1. Required GitHub Secrets
+### 1. Configure GitHub OIDC with AWS IAM
 
-Navigate to: **Settings** → **Secrets and variables** → **Actions**
+The workflows use the existing IAM role: `arn:aws:iam::920120424621:role/githubrepo`
 
-Add the following secrets:
+**No secrets needed!** The workflows authenticate using OIDC (OpenID Connect).
 
+**Prerequisites:**
+- IAM role `githubrepo` must have a trust policy allowing GitHub Actions
+- Role must have permissions for: EKS, EC2, VPC, DynamoDB, ECR, CloudWatch, IAM
+
+**Verify IAM Role Trust Policy:**
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::920120424621:oidc-provider/token.actions.githubusercontent.com"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
+        },
+        "StringLike": {
+          "token.actions.githubusercontent.com:sub": "repo:i546927MehdiCetinkaya/casestudy3:*"
+        }
+      }
+    }
+  ]
+}
 ```
-AWS_ACCESS_KEY_ID          # From AWS SSO credentials
-AWS_SECRET_ACCESS_KEY      # From AWS SSO credentials  
-AWS_SESSION_TOKEN          # From AWS SSO credentials (expires!)
-```
-
-**Note**: AWS SSO credentials expire! You'll need to refresh them regularly using the `refresh-credentials.ps1` script and update the secrets.
 
 ---
 
@@ -125,19 +145,15 @@ destroy-infrastructure
 
 ## Tips & Best Practices
 
-### 1. AWS Credentials Refresh
+### 1. IAM Role Permissions
 
-AWS SSO credentials expire regularly. Refresh them:
-
-```powershell
-# Run this script
-.\scripts\refresh-credentials.ps1
-
-# Then update GitHub secrets:
-# 1. Copy the three environment variables
-# 2. Go to GitHub Settings → Secrets
-# 3. Update all three secrets
-```
+Zorg dat de `githubrepo` role de volgende permissions heeft:
+- `AmazonEKSClusterPolicy` 
+- `AmazonEKSWorkerNodePolicy`
+- `AmazonEC2ContainerRegistryPowerUser`
+- `AmazonDynamoDBFullAccess` (of custom policy)
+- `CloudWatchLogsFullAccess`
+- Custom VPC/EC2 policies voor netwerk resources
 
 ### 2. Testing Before Production
 

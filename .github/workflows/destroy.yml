@@ -34,13 +34,14 @@ jobs:
     needs: [validate-input]
     if: always() && needs.validate-input.result == 'success'
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          role-to-assume: arn:aws:iam::920120424621:role/githubrepo
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Backup DynamoDB tables
@@ -72,6 +73,9 @@ jobs:
       needs.validate-input.result == 'success' &&
       (needs.backup.result == 'success' || needs.backup.result == 'skipped')
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -79,9 +83,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          role-to-assume: arn:aws:iam::920120424621:role/githubrepo
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Setup Terraform
@@ -158,6 +160,9 @@ jobs:
     name: Destroy Terraform Infrastructure
     needs: destroy-kubernetes
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -165,9 +170,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          role-to-assume: arn:aws:iam::920120424621:role/githubrepo
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Setup Terraform
@@ -212,13 +215,14 @@ jobs:
     name: Cleanup ECR Repositories
     needs: destroy-infrastructure
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          role-to-assume: arn:aws:iam::920120424621:role/githubrepo
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Delete ECR repositories
@@ -239,13 +243,14 @@ jobs:
     name: Cleanup CloudWatch Logs
     needs: destroy-infrastructure
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          role-to-assume: arn:aws:iam::920120424621:role/githubrepo
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Delete CloudWatch log groups
@@ -268,13 +273,14 @@ jobs:
     needs: [destroy-infrastructure, cleanup-ecr, cleanup-logs]
     if: always()
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          role-to-assume: arn:aws:iam::920120424621:role/githubrepo
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Final resource check
