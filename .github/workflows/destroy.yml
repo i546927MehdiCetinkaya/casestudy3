@@ -94,10 +94,17 @@ jobs:
 
       - name: Get cluster name
         id: cluster
-        working-directory: ./terraform
         run: |
-          terraform init
-          CLUSTER_NAME=$(terraform output -raw eks_cluster_name 2>/dev/null || echo "innovatech-employee-lifecycle")
+          # Try to find EKS cluster by tag or naming pattern
+          CLUSTER_NAME=$(aws eks list-clusters --query 'clusters[?contains(@, `innovatech`)]' --output text 2>/dev/null | head -n1)
+          
+          if [ -z "$CLUSTER_NAME" ]; then
+            CLUSTER_NAME="innovatech-employee-lifecycle-eks"
+            echo "⚠️  No cluster found via AWS API, using default name: $CLUSTER_NAME"
+          else
+            echo "✅ Found cluster: $CLUSTER_NAME"
+          fi
+          
           echo "cluster_name=$CLUSTER_NAME" >> $GITHUB_OUTPUT
 
       - name: Setup kubectl
@@ -182,13 +189,74 @@ jobs:
         working-directory: ./terraform
         run: terraform init
 
+      - name: Check if state exists
+        id: state_check
+        working-directory: ./terraform
+        run: |
+          if terraform state list > /dev/null 2>&1; then
+            echo "state_exists=true" >> $GITHUB_OUTPUT
+            echo "✅ Terraform state found"
+          else
+            echo "state_exists=false" >> $GITHUB_OUTPUT
+            echo "⚠️  No Terraform state found - will skip Terraform destroy"
+            echo "This likely means resources were already destroyed or never created with this state"
+          fi
+
       - name: Terraform Plan Destroy
+        if: steps.state_check.outputs.state_exists == 'true'
         working-directory: ./terraform
         run: terraform plan -destroy -out=destroy.tfplan
 
       - name: Terraform Destroy
+        if: steps.state_check.outputs.state_exists == 'true'
         working-directory: ./terraform
         run: terraform destroy -auto-approve
+
+      - name: Manual cleanup (if no state)
+        if: steps.state_check.outputs.state_exists == 'false'
+        run: |
+          echo "⚠️  No Terraform state - performing manual cleanup of known resources"
+          
+          # Delete DynamoDB tables
+          echo "Cleaning up DynamoDB tables..."
+          aws dynamodb delete-table --table-name innovatech-employees 2>/dev/null || true
+          aws dynamodb delete-table --table-name innovatech-employees-workspaces 2>/dev/null || true
+          
+          # Delete EKS cluster
+          echo "Cleaning up EKS cluster..."
+          CLUSTER=$(aws eks list-clusters --query 'clusters[?contains(@, `innovatech`)]' --output text | head -n1)
+          if [ -n "$CLUSTER" ]; then
+            echo "Found cluster: $CLUSTER"
+            # Delete node groups first
+            for ng in $(aws eks list-nodegroups --cluster-name $CLUSTER --query 'nodegroups' --output text); do
+              echo "Deleting node group: $ng"
+              aws eks delete-nodegroup --cluster-name $CLUSTER --nodegroup-name $ng || true
+            done
+            
+            # Wait a bit for node groups to delete
+            sleep 30
+            
+            # Delete cluster
+            echo "Deleting cluster: $CLUSTER"
+            aws eks delete-cluster --name $CLUSTER || true
+          fi
+          
+          # Release Elastic IPs
+          echo "Cleaning up Elastic IPs..."
+          for eip in $(aws ec2 describe-addresses --filters "Name=tag:Project,Values=InnovatechEmployeeLifecycle" --query 'Addresses[*].AllocationId' --output text); do
+            echo "Releasing EIP: $eip"
+            aws ec2 release-address --allocation-id $eip || true
+          done
+          
+          # Delete NAT Gateways
+          echo "Cleaning up NAT Gateways..."
+          for ngw in $(aws ec2 describe-nat-gateways --filter "Name=tag:Project,Values=InnovatechEmployeeLifecycle" --query 'NatGateways[?State!=`deleted`].NatGatewayId' --output text); do
+            echo "Deleting NAT Gateway: $ngw"
+            aws ec2 delete-nat-gateway --nat-gateway-id $ngw || true
+          done
+          
+          echo "⚠️  Note: VPC and related resources will be cleaned up after EKS deletion completes"
+          echo "This may take 5-10 minutes. Check AWS Console to verify."
 
       - name: Verify destruction
         run: |
@@ -260,13 +328,32 @@ jobs:
           
           # Get all log groups with our prefix
           LOG_GROUPS=$(aws logs describe-log-groups \
-            --query 'logGroups[?contains(logGroupName, `innovatech`) || contains(logGroupName, `/aws/eks/innovatech`)].logGroupName' \
+            --query 'logGroups[?contains(logGroupName, `innovatech`) || contains(logGroupName, `/aws/eks/innovatech`) || contains(logGroupName, `/aws/vpc/innovatech`)].logGroupName' \
             --output text)
           
           for log_group in $LOG_GROUPS; do
             echo "Deleting log group: $log_group"
             aws logs delete-log-group --log-group-name "$log_group" || true
           done
+          
+          # Also clean up VPC flow log IAM role
+          echo "Cleaning up VPC flow log IAM role..."
+          ROLE_NAME="innovatech-employee-lifecycle-vpc-flow-log-role"
+          
+          # Detach policies
+          for policy in $(aws iam list-attached-role-policies --role-name $ROLE_NAME --query 'AttachedPolicies[*].PolicyArn' --output text 2>/dev/null); do
+            echo "Detaching policy: $policy"
+            aws iam detach-role-policy --role-name $ROLE_NAME --policy-arn $policy || true
+          done
+          
+          # Delete inline policies
+          for policy in $(aws iam list-role-policies --role-name $ROLE_NAME --query 'PolicyNames' --output text 2>/dev/null); do
+            echo "Deleting inline policy: $policy"
+            aws iam delete-role-policy --role-name $ROLE_NAME --policy-name $policy || true
+          done
+          
+          # Delete role
+          aws iam delete-role --role-name $ROLE_NAME || true
 
   final-verification:
     name: Final Verification
