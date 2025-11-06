@@ -1,0 +1,218 @@
+# Namespace for HR Portal
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: hr-portal
+  labels:
+    name: hr-portal
+    environment: production
+---
+# Service Account for HR Portal Backend with IRSA
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: hr-portal-backend
+  namespace: hr-portal
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/innovatech-employee-lifecycle-hr-portal-role"
+---
+# ConfigMap for HR Portal Backend
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hr-portal-config
+  namespace: hr-portal
+data:
+  DYNAMODB_TABLE: "innovatech-employees"
+  DYNAMODB_WORKSPACES_TABLE: "innovatech-employees-workspaces"
+  AWS_REGION: "eu-west-1"
+  NODE_ENV: "production"
+---
+# Secret for HR Portal (placeholder - use AWS Secrets Manager in production)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: hr-portal-secrets
+  namespace: hr-portal
+type: Opaque
+data:
+  # Base64 encoded values
+  JWT_SECRET: c2VjdXJlLWp3dC1zZWNyZXQtY2hhbmdlLW1l
+---
+# Deployment for HR Portal Backend
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hr-portal-backend
+  namespace: hr-portal
+  labels:
+    app: hr-portal-backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: hr-portal-backend
+  template:
+    metadata:
+      labels:
+        app: hr-portal-backend
+    spec:
+      serviceAccountName: hr-portal-backend
+      containers:
+      - name: backend
+        image: ACCOUNT_ID.dkr.ecr.eu-west-1.amazonaws.com/hr-portal-backend:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 3000
+          name: http
+        envFrom:
+        - configMapRef:
+            name: hr-portal-config
+        - secretRef:
+            name: hr-portal-secrets
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+---
+# Service for HR Portal Backend
+apiVersion: v1
+kind: Service
+metadata:
+  name: hr-portal-backend
+  namespace: hr-portal
+spec:
+  selector:
+    app: hr-portal-backend
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 3000
+  type: ClusterIP
+---
+# Deployment for HR Portal Frontend
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hr-portal-frontend
+  namespace: hr-portal
+  labels:
+    app: hr-portal-frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: hr-portal-frontend
+  template:
+    metadata:
+      labels:
+        app: hr-portal-frontend
+    spec:
+      containers:
+      - name: frontend
+        image: ACCOUNT_ID.dkr.ecr.eu-west-1.amazonaws.com/hr-portal-frontend:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 80
+          name: http
+        env:
+        - name: REACT_APP_API_URL
+          value: "http://hr-portal-backend"
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 101
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+---
+# Service for HR Portal Frontend
+apiVersion: v1
+kind: Service
+metadata:
+  name: hr-portal-frontend
+  namespace: hr-portal
+spec:
+  selector:
+    app: hr-portal-frontend
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 80
+  type: ClusterIP
+---
+# Ingress for HR Portal (requires AWS Load Balancer Controller)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: hr-portal
+  namespace: hr-portal
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:eu-west-1:ACCOUNT_ID:certificate/CERT_ID"
+    alb.ingress.kubernetes.io/ssl-redirect: '443'
+spec:
+  ingressClassName: alb
+  rules:
+  - host: hr.innovatech.example.com
+    http:
+      paths:
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: hr-portal-backend
+            port:
+              number: 80
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: hr-portal-frontend
+            port:
+              number: 80

@@ -1,0 +1,150 @@
+# Namespace for Employee Workspaces
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: workspaces
+  labels:
+    name: workspaces
+    environment: production
+---
+# Service Account for Workspace Provisioner
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: workspace-provisioner
+  namespace: workspaces
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/innovatech-employee-lifecycle-workspace-role"
+---
+# StorageClass for Workspace Persistent Volumes
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: workspace-storage
+provisioner: ebs.csi.aws.com
+parameters:
+  type: gp3
+  encrypted: "true"
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+---
+# Example: Workspace Pod for John Doe
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: john-doe-workspace-pvc
+  namespace: workspaces
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: workspace-storage
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: john-doe-workspace
+  namespace: workspaces
+  labels:
+    app: workspace
+    employee: john-doe
+    role: developer
+spec:
+  serviceAccountName: workspace-provisioner
+  containers:
+  - name: code-server
+    image: ACCOUNT_ID.dkr.ecr.eu-west-1.amazonaws.com/employee-workspace:latest
+    imagePullPolicy: Always
+    ports:
+    - containerPort: 8080
+      name: http
+    env:
+    - name: EMPLOYEE_ID
+      value: "john-doe"
+    - name: EMPLOYEE_EMAIL
+      value: "john.doe@innovatech.com"
+    - name: EMPLOYEE_ROLE
+      value: "developer"
+    - name: PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: john-doe-workspace-secret
+          key: password
+    volumeMounts:
+    - name: workspace-storage
+      mountPath: /home/coder/workspace
+    - name: tmp
+      mountPath: /tmp
+    resources:
+      requests:
+        memory: "1Gi"
+        cpu: "500m"
+      limits:
+        memory: "2Gi"
+        cpu: "1000m"
+    securityContext:
+      runAsNonRoot: true
+      runAsUser: 1000
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+        - ALL
+  volumes:
+  - name: workspace-storage
+    persistentVolumeClaim:
+      claimName: john-doe-workspace-pvc
+  - name: tmp
+    emptyDir: {}
+---
+# Secret for Workspace
+apiVersion: v1
+kind: Secret
+metadata:
+  name: john-doe-workspace-secret
+  namespace: workspaces
+type: Opaque
+data:
+  # Base64 encoded password - generated securely
+  password: Q2hhbmdlTWUxMjM0NSE=
+---
+# Service for Workspace
+apiVersion: v1
+kind: Service
+metadata:
+  name: john-doe-workspace
+  namespace: workspaces
+spec:
+  selector:
+    employee: john-doe
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 8080
+  type: ClusterIP
+---
+# Ingress for Workspace
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: john-doe-workspace
+  namespace: workspaces
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: '443'
+spec:
+  ingressClassName: alb
+  rules:
+  - host: john-doe.workspaces.innovatech.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: john-doe-workspace
+            port:
+              number: 80
