@@ -10,25 +10,20 @@ This directory contains GitHub Actions workflows for automating the deployment, 
 - Manual (`workflow_dispatch`)
 - Push to `main` branch (paths: terraform, kubernetes)
 
-**Environments**: dev, staging, production
-
 **Jobs**:
 1. **validate**: Validates Terraform and Kubernetes configurations
 2. **plan**: Creates Terraform plan
-3. **approval**: Manual approval for production (optional)
-4. **deploy-infrastructure**: Applies Terraform
-5. **deploy-kubernetes**: Deploys K8s resources
-6. **build-images**: Builds and pushes Docker images to ECR
-7. **post-deployment-tests**: Runs health checks
-8. **notify**: Sends deployment summary
+3. **deploy-infrastructure**: Applies Terraform
+4. **deploy-kubernetes**: Deploys K8s resources
+5. **build-images**: Builds and pushes Docker images to ECR
+6. **post-deployment-tests**: Runs health checks
+7. **notify**: Sends deployment summary
 
 **Usage**:
 ```bash
 # Go to Actions tab in GitHub
 # Select "Deploy Infrastructure"
 # Click "Run workflow"
-# Choose environment: dev/staging/production
-# Optionally skip approval for testing
 ```
 
 ---
@@ -37,27 +32,22 @@ This directory contains GitHub Actions workflows for automating the deployment, 
 
 **Trigger**: Manual only (`workflow_dispatch`)
 
-**Environments**: dev, staging, production
-
 **Jobs**:
 1. **validate-input**: Requires typing "destroy" to confirm
-2. **approval**: Manual approval for production
-3. **backup**: Creates DynamoDB backups
-4. **destroy-kubernetes**: Deletes K8s resources
-5. **destroy-infrastructure**: Destroys Terraform resources
-6. **cleanup-ecr**: Deletes ECR repositories
-7. **cleanup-logs**: Deletes CloudWatch log groups
-8. **final-verification**: Verifies all resources removed
-9. **notify**: Sends destruction summary
+2. **backup**: Creates DynamoDB backups
+3. **destroy-kubernetes**: Deletes K8s resources
+4. **destroy-infrastructure**: Destroys Terraform resources
+5. **cleanup-ecr**: Deletes ECR repositories
+6. **cleanup-logs**: Deletes CloudWatch log groups
+7. **final-verification**: Verifies all resources removed
+8. **notify**: Sends destruction summary
 
 **Usage**:
 ```bash
 # Go to Actions tab in GitHub
 # Select "Destroy Infrastructure"
 # Click "Run workflow"
-# Choose environment
 # Type "destroy" in confirmation field
-# Optionally skip approval (NOT recommended for production)
 ```
 
 **⚠️ WARNING**: This is IRREVERSIBLE! Backups are created but review carefully.
@@ -95,25 +85,6 @@ AWS_SESSION_TOKEN          # From AWS SSO credentials (expires!)
 
 **Note**: AWS SSO credentials expire! You'll need to refresh them regularly using the `refresh-credentials.ps1` script and update the secrets.
 
-### 2. Required GitHub Environments
-
-Navigate to: **Settings** → **Environments**
-
-Create environments:
-- `dev`
-- `staging`
-- `production`
-- `production-approval` (with required reviewers)
-- `production-destruction` (with required reviewers)
-
-### 3. Environment Variables (Optional)
-
-In each environment, you can set:
-```
-AWS_REGION=eu-west-1
-CLUSTER_NAME=innovatech-employee-lifecycle
-```
-
 ---
 
 ## Workflow Diagrams
@@ -123,8 +94,6 @@ CLUSTER_NAME=innovatech-employee-lifecycle
 validate
    ↓
 plan
-   ↓
-approval (production only)
    ↓
 deploy-infrastructure
    ├→ deploy-kubernetes
@@ -138,8 +107,6 @@ deploy-infrastructure
 ### Destroy Workflow
 ```
 validate-input
-   ↓
-approval (production only)
    ↓
 backup
    ↓
@@ -174,12 +141,12 @@ AWS SSO credentials expire regularly. Refresh them:
 
 ### 2. Testing Before Production
 
-Always test in `dev` first:
-1. Deploy to `dev`
-2. Test functionality
-3. Review costs in AWS Cost Explorer
-4. Destroy `dev` when satisfied
-5. Deploy to `production`
+Test eerst lokaal of met GitHub Actions:
+1. Test Terraform formatting met `terraform fmt -recursive terraform/`
+2. Push code naar GitHub
+3. Run "Deploy Infrastructure" workflow
+4. Test de deployment
+5. Run "Destroy Infrastructure" workflow om kosten te besparen
 
 ### 3. Cost Management
 

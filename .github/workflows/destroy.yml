@@ -3,23 +3,10 @@ name: Destroy Infrastructure
 on:
   workflow_dispatch:
     inputs:
-      environment:
-        description: 'Environment to destroy'
-        required: true
-        type: choice
-        options:
-          - dev
-          - staging
-          - production
       confirmation:
         description: 'Type "destroy" to confirm'
         required: true
         type: string
-      skip_approval:
-        description: 'Skip manual approval (not recommended for production)'
-        required: false
-        type: boolean
-        default: false
 
 env:
   AWS_REGION: eu-west-1
@@ -39,29 +26,14 @@ jobs:
 
       - name: Environment check
         run: |
-          echo "🔴 WARNING: About to destroy ${{ github.event.inputs.environment }} environment"
+          echo "🔴 WARNING: About to destroy infrastructure"
           echo "This action is IRREVERSIBLE!"
-
-  approval:
-    name: Manual Approval
-    needs: validate-input
-    runs-on: ubuntu-latest
-    if: |
-      github.event.inputs.environment == 'production' && 
-      github.event.inputs.skip_approval != 'true'
-    environment:
-      name: production-destruction
-    steps:
-      - name: Wait for approval
-        run: echo "Destruction of production approved"
 
   backup:
     name: Create Backup
-    needs: [validate-input, approval]
+    needs: [validate-input]
     if: always() && needs.validate-input.result == 'success'
     runs-on: ubuntu-latest
-    environment: 
-      name: ${{ github.event.inputs.environment }}
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -94,15 +66,12 @@ jobs:
 
   destroy-kubernetes:
     name: Destroy Kubernetes Resources
-    needs: [validate-input, approval, backup]
+    needs: [validate-input, backup]
     if: |
       always() && 
       needs.validate-input.result == 'success' &&
-      (needs.approval.result == 'success' || needs.approval.result == 'skipped') &&
       (needs.backup.result == 'success' || needs.backup.result == 'skipped')
     runs-on: ubuntu-latest
-    environment: 
-      name: ${{ github.event.inputs.environment }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -189,8 +158,6 @@ jobs:
     name: Destroy Terraform Infrastructure
     needs: destroy-kubernetes
     runs-on: ubuntu-latest
-    environment: 
-      name: ${{ github.event.inputs.environment }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -245,8 +212,6 @@ jobs:
     name: Cleanup ECR Repositories
     needs: destroy-infrastructure
     runs-on: ubuntu-latest
-    environment: 
-      name: ${{ github.event.inputs.environment }}
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -274,8 +239,6 @@ jobs:
     name: Cleanup CloudWatch Logs
     needs: destroy-infrastructure
     runs-on: ubuntu-latest
-    environment: 
-      name: ${{ github.event.inputs.environment }}
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -305,8 +268,6 @@ jobs:
     needs: [destroy-infrastructure, cleanup-ecr, cleanup-logs]
     if: always()
     runs-on: ubuntu-latest
-    environment: 
-      name: ${{ github.event.inputs.environment }}
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -363,7 +324,6 @@ jobs:
       - name: Destruction Summary
         run: |
           echo "=== Destruction Summary ==="
-          echo "Environment: ${{ github.event.inputs.environment }}"
           echo "Kubernetes: ${{ needs.destroy-kubernetes.result }}"
           echo "Terraform: ${{ needs.destroy-infrastructure.result }}"
           echo "ECR Cleanup: ${{ needs.cleanup-ecr.result }}"
