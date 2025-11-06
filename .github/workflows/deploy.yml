@@ -52,6 +52,7 @@ jobs:
 
       - name: Validate Kubernetes Manifests
         run: |
+          kubeconform -summary -output pretty kubernetes/namespaces.yaml
           kubeconform -summary -output pretty kubernetes/rbac.yaml
           kubeconform -summary -output pretty kubernetes/network-policies.yaml
           kubeconform -summary -output pretty kubernetes/hr-portal.yaml
@@ -211,6 +212,9 @@ jobs:
         run: |
           kubectl cluster-info
           kubectl get nodes
+
+      - name: Deploy Namespaces
+        run: kubectl apply -f kubernetes/namespaces.yaml
 
       - name: Deploy RBAC
         run: kubectl apply -f kubernetes/rbac.yaml

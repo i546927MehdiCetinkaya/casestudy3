@@ -15,8 +15,8 @@ COPY src ./src
 # Production image
 FROM node:18-alpine
 
-# Create non-root user
-RUN addgroup -g 1000 nodeapp && adduser -u 1000 -G nodeapp -s /bin/sh -D nodeapp
+# Create non-root user (use GID/UID that don't conflict with base image)
+RUN addgroup -g 1001 nodeapp && adduser -u 1001 -G nodeapp -s /bin/sh -D nodeapp
 
 WORKDIR /app
 

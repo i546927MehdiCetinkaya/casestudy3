@@ -1,12 +1,3 @@
-# Namespace for Employee Workspaces
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: workspaces
-  labels:
-    name: workspaces
-    environment: production
----
 # Service Account for Workspace Provisioner
 apiVersion: v1
 kind: ServiceAccount

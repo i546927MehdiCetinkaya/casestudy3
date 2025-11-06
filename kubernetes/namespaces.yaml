@@ -1,0 +1,16 @@
+# Create all required namespaces first
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: hr-portal
+  labels:
+    name: hr-portal
+    environment: production
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: workspaces
+  labels:
+    name: workspaces
+    environment: production
