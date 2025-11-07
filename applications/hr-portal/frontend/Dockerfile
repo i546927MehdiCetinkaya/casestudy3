@@ -25,6 +25,11 @@ COPY --from=build /app/build /usr/share/nginx/html
 # Copy nginx configuration
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
+# Create nginx cache directories and set permissions for non-root user (uid 101)
+RUN mkdir -p /tmp/nginx-client-body /tmp/nginx-proxy /tmp/nginx-fastcgi /tmp/nginx-uwsgi /tmp/nginx-scgi /var/cache/nginx /var/run && \
+    chown -R 101:101 /tmp /var/cache/nginx /var/run && \
+    chmod -R 755 /tmp /var/cache/nginx /var/run
+
 # Expose port 80
 EXPOSE 80
 
