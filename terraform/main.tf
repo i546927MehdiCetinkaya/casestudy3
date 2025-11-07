@@ -112,6 +112,17 @@ module "iam" {
   depends_on = [module.eks, module.dynamodb]
 }
 
+# EBS CSI Driver Module
+module "ebs_csi" {
+  source = "./modules/ebs-csi"
+
+  cluster_name    = var.cluster_name
+  eks_oidc_issuer = module.eks.oidc_issuer
+  eks_oidc_arn    = module.eks.oidc_provider_arn
+
+  depends_on = [module.eks]
+}
+
 # Security Groups Module
 module "security_groups" {
   source = "./modules/security-groups"
