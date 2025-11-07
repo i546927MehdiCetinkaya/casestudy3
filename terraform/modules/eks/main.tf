@@ -192,16 +192,24 @@ resource "aws_iam_role_policy" "load_balancer_controller" {
       {
         Effect = "Allow"
         Action = [
-          "ec2:DescribeAvailabilityZones",
-          "ec2:DescribeSubnets",
-          "ec2:DescribeVpcs",
-          "ec2:DescribeSecurityGroups",
-          "ec2:DescribeInstances",
-          "ec2:DescribeNetworkInterfaces",
-          "ec2:DescribeTags",
+          "ec2:Describe*",
+          "ec2:CreateSecurityGroup",
+          "ec2:AuthorizeSecurityGroupIngress",
+          "ec2:RevokeSecurityGroupIngress",
+          "ec2:DeleteSecurityGroup",
           "ec2:CreateTags",
           "ec2:DeleteTags",
-          "elasticloadbalancing:*"
+          "elasticloadbalancing:*",
+          "iam:CreateServiceLinkedRole",
+          "iam:GetServerCertificate",
+          "iam:ListServerCertificates",
+          "cognito-idp:DescribeUserPoolClient",
+          "acm:ListCertificates",
+          "acm:DescribeCertificate",
+          "shield:GetSubscriptionState",
+          "shield:DescribeProtection",
+          "shield:CreateProtection",
+          "shield:DeleteProtection"
         ]
         Resource = "*"
       }
