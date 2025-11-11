@@ -1,341 +1,679 @@
-# Architecture Documentation
+# Architectuur Overzicht# Architecture Documentation
+
 ## Employee Lifecycle Automation & Virtual Workspaces on AWS EKS
 
+## 🎯 Systeem Overview
+
 **Project**: Innovatech Solutions Case Study 3  
-**Date**: November 6, 2025  
+
+Dit systeem implementeert een **geautomatiseerde employee lifecycle management** oplossing met Kubernetes op AWS EKS.**Date**: November 6, 2025  
+
 **Version**: 1.0.0
 
 ---
 
+---
+
+## 📊 High-Level Architectuur Diagram
+
 ## Table of Contents
 
-1. [Executive Summary](#executive-summary)
+```mermaid
+
+%%{init: {'theme':'dark', 'themeVariables': { 'primaryColor':'#4a9eff','primaryTextColor':'#fff','primaryBorderColor':'#7C0000','lineColor':'#F8B229','secondaryColor':'#006100','tertiaryColor':'#1a1a1a'}}}%%1. [Executive Summary](#executive-summary)
+
 2. [Architecture Overview](#architecture-overview)
-3. [Design Principles](#design-principles)
-4. [Component Architecture](#component-architecture)
-5. [Zero Trust Implementation](#zero-trust-implementation)
-6. [Data Flow](#data-flow)
-7. [Security Architecture](#security-architecture)
+
+flowchart TB3. [Design Principles](#design-principles)
+
+    subgraph Internet["🌐 Internet"]4. [Component Architecture](#component-architecture)
+
+        User[👤 HR User]5. [Zero Trust Implementation](#zero-trust-implementation)
+
+        Employee[👨‍💻 Employee]6. [Data Flow](#data-flow)
+
+    end7. [Security Architecture](#security-architecture)
+
 8. [High Availability & Scalability](#high-availability--scalability)
-9. [Design Decisions & Trade-offs](#design-decisions--trade-offs)
-10. [Documented Deviations](#documented-deviations)
-11. [Alternatives Considered](#alternatives-considered)
-12. [Cost Analysis](#cost-analysis)
-13. [Reflection](#reflection)
 
----
+    subgraph AWS["☁️ AWS Cloud - eu-west-1"]9. [Design Decisions & Trade-offs](#design-decisions--trade-offs)
 
-## 1. Executive Summary
+        subgraph VPC["🏢 VPC - 10.0.0.0/16"]10. [Documented Deviations](#documented-deviations)
 
-This document provides a comprehensive architectural overview of the Employee Lifecycle Automation system for Innovatech Solutions. The solution implements a fully automated employee onboarding and offboarding process with virtual workspace provisioning, built on AWS EKS with Zero Trust security principles.
+            subgraph PublicSubnet["📡 Public Subnets"]11. [Alternatives Considered](#alternatives-considered)
 
-### Key Achievements
-- ✅ Fully automated employee lifecycle management
-- ✅ Virtual workspaces replacing physical device provisioning
-- ✅ Zero Trust architecture with network micro-segmentation
-- ✅ Infrastructure as Code with Terraform
-- ✅ Kubernetes-native design with RBAC and NetworkPolicies
-- ✅ Private AWS service connectivity via VPC endpoints
-- ✅ Comprehensive monitoring and logging
+                ALB[⚖️ Application<br/>Load Balancer]12. [Cost Analysis](#cost-analysis)
 
----
+                NAT[🔌 NAT Gateway]13. [Reflection](#reflection)
 
-## 2. Architecture Overview
+            end
 
-### High-Level Architecture
+            ---
 
-```
-┌─────────────────────────────────────────────────────────────┐
+            subgraph PrivateSubnet["🔒 Private Subnets"]
+
+                subgraph EKS["☸️ EKS Cluster"]## 1. Executive Summary
+
+                    subgraph HR["HR Portal Namespace"]
+
+                        HRPod[🖥️ HR Frontend Pod<br/>React]This document provides a comprehensive architectural overview of the Employee Lifecycle Automation system for Innovatech Solutions. The solution implements a fully automated employee onboarding and offboarding process with virtual workspace provisioning, built on AWS EKS with Zero Trust security principles.
+
+                        BEPod[⚙️ Backend Pod<br/>Node.js]
+
+                    end### Key Achievements
+
+                    - ✅ Fully automated employee lifecycle management
+
+                    subgraph WS["Workspaces Namespace"]- ✅ Virtual workspaces replacing physical device provisioning
+
+                        WSPod1[💻 Workspace Pod 1<br/>code-server]- ✅ Zero Trust architecture with network micro-segmentation
+
+                        WSPod2[💻 Workspace Pod 2<br/>code-server]- ✅ Infrastructure as Code with Terraform
+
+                        WSPod3[💻 Workspace Pod 3<br/>code-server]- ✅ Kubernetes-native design with RBAC and NetworkPolicies
+
+                    end- ✅ Private AWS service connectivity via VPC endpoints
+
+                end- ✅ Comprehensive monitoring and logging
+
+            end
+
+        end---
+
+        
+
+        DynamoDB[(🗄️ DynamoDB<br/>Employees Table)]## 2. Architecture Overview
+
+        SES[📧 AWS SES<br/>Email Service]
+
+        SSM[🔐 Systems Manager<br/>Parameter Store]### High-Level Architecture
+
+        ECR[📦 ECR<br/>Container Registry]
+
+        CloudWatch[📊 CloudWatch<br/>Logs & Metrics]```
+
+    end┌─────────────────────────────────────────────────────────────┐
+
 │                         Internet                             │
-└───────────────────────┬─────────────────────────────────────┘
-                        │
-        ┌───────────────▼────────────────┐
-        │  Application Load Balancer     │
-        │  (HTTPS:443) - Public Subnets  │
-        └───────────────┬────────────────┘
-                        │
-        ┌───────────────▼────────────────────────────────┐
-        │              AWS VPC (10.0.0.0/16)             │
-        │ ┌──────────────────────────────────────────┐   │
-        │ │         EKS Cluster Control Plane        │   │
-        │ └──────────────────┬───────────────────────┘   │
-        │                    │                            │
-        │ ┌─────────────────▼───────────────────────┐   │
-        │ │     Private Subnets (Worker Nodes)      │   │
-        │ │  ┌────────────┐      ┌────────────┐     │   │
-        │ │  │ HR Portal  │      │ Workspaces │     │   │
-        │ │  │ Namespace  │      │ Namespace  │     │   │
-        │ │  └─────┬──────┘      └──────┬─────┘     │   │
-        │ └────────┼─────────────────────┼───────────┘   │
-        │          │                     │                │
-        │    ┌─────▼─────────────────────▼────────┐      │
-        │    │      VPC Endpoints (Private)       │      │
-        │    │  • DynamoDB  • ECR  • CloudWatch   │      │
-        │    └────────┬───────────────────────────┘      │
-        └─────────────┼──────────────────────────────────┘
+
+    User -->|HTTPS| ALB└───────────────────────┬─────────────────────────────────────┘
+
+    Employee -->|HTTPS| ALB                        │
+
+    ALB -->|Route /| HRPod        ┌───────────────▼────────────────┐
+
+    ALB -->|Route /<emp-id>/*| WSPod1        │  Application Load Balancer     │
+
+    ALB -->|Route /<emp-id>/*| WSPod2        │  (HTTPS:443) - Public Subnets  │
+
+    ALB -->|Route /<emp-id>/*| WSPod3        └───────────────┬────────────────┘
+
+                            │
+
+    HRPod <-->|API Calls| BEPod        ┌───────────────▼────────────────────────────────┐
+
+    BEPod <-->|Read/Write| DynamoDB        │              AWS VPC (10.0.0.0/16)             │
+
+    BEPod -->|Send Email| SES        │ ┌──────────────────────────────────────────┐   │
+
+    BEPod <-->|Get Config| SSM        │ │         EKS Cluster Control Plane        │   │
+
+            │ └──────────────────┬───────────────────────┘   │
+
+    EKS -->|Pull Images| ECR        │                    │                            │
+
+    EKS -->|Send Logs| CloudWatch        │ ┌─────────────────▼───────────────────────┐   │
+
+            │ │     Private Subnets (Worker Nodes)      │   │
+
+    SES -.->|Email with<br/>Credentials| Employee        │ │  ┌────────────┐      ┌────────────┐     │   │
+
+            │ │  │ HR Portal  │      │ Workspaces │     │   │
+
+    style Internet fill:#1a1a1a,stroke:#4a9eff,stroke-width:2px        │ │  │ Namespace  │      │ Namespace  │     │   │
+
+    style AWS fill:#232f3e,stroke:#ff9900,stroke-width:3px        │ │  └─────┬──────┘      └──────┬─────┘     │   │
+
+    style VPC fill:#2a2a2a,stroke:#4a9eff,stroke-width:2px        │ └────────┼─────────────────────┼───────────┘   │
+
+    style PublicSubnet fill:#1a4d1a,stroke:#00ff00,stroke-width:2px        │          │                     │                │
+
+    style PrivateSubnet fill:#4d1a1a,stroke:#ff0000,stroke-width:2px        │    ┌─────▼─────────────────────▼────────┐      │
+
+    style EKS fill:#2a2a4d,stroke:#00ffff,stroke-width:2px        │    │      VPC Endpoints (Private)       │      │
+
+    style HR fill:#1a3a4d,stroke:#4a9eff,stroke-width:2px        │    │  • DynamoDB  • ECR  • CloudWatch   │      │
+
+    style WS fill:#4d3a1a,stroke:#ffaa00,stroke-width:2px        │    └────────┬───────────────────────────┘      │
+
+```        └─────────────┼──────────────────────────────────┘
+
                       │
-        ┌─────────────▼──────────────┐
+
+---        ┌─────────────▼──────────────┐
+
         │  AWS Managed Services      │
-        │  • DynamoDB Tables         │
+
+## 🏗️ Infrastructuur Components        │  • DynamoDB Tables         │
+
         │  • ECR Repositories        │
-        │  • CloudWatch Logs         │
+
+### 1. **Networking Layer**        │  • CloudWatch Logs         │
+
         └────────────────────────────┘
-```
 
-### Key Components
+#### VPC Configuration```
 
-1. **Network Layer**
-   - VPC with 3 Availability Zones
+- **CIDR Block**: 10.0.0.0/16
+
+- **Availability Zones**: 2 AZs voor high availability### Key Components
+
+- **Subnets**:
+
+  - **Public Subnets** (10.0.1.0/24, 10.0.2.0/24): ALB, NAT Gateway1. **Network Layer**
+
+  - **Private Subnets** (10.0.11.0/24, 10.0.12.0/24): EKS nodes, Pods   - VPC with 3 Availability Zones
+
    - Public subnets for Load Balancers
-   - Private subnets for EKS nodes
-   - VPC endpoints for private AWS connectivity
 
-2. **Compute Layer**
+#### Security   - Private subnets for EKS nodes
+
+- **Network Policies**: Pod-to-pod isolatie per namespace   - VPC endpoints for private AWS connectivity
+
+- **Security Groups**: Restrictieve inbound/outbound rules
+
+- **VPC Endpoints**: Private connectie met AWS services (S3, ECR, DynamoDB)2. **Compute Layer**
+
    - EKS Managed Kubernetes cluster
-   - Managed node group (t3.medium instances)
+
+---   - Managed node group (t3.medium instances)
+
    - Auto-scaling enabled
 
-3. **Application Layer**
-   - HR Portal (Backend + Frontend)
-   - Employee Workspace pods (code-server)
+### 2. **Compute Layer**
 
-4. **Data Layer**
-   - DynamoDB for employee records
-   - DynamoDB for workspace metadata
+3. **Application Layer**
+
+#### EKS Cluster   - HR Portal (Backend + Frontend)
+
+- **Version**: 1.30   - Employee Workspace pods (code-server)
+
+- **Node Groups**:
+
+  - Instance Type: t3.medium4. **Data Layer**
+
+  - Min/Max Nodes: 2-4 (auto-scaling)   - DynamoDB for employee records
+
+  - Disk: 30GB gp3 volumes   - DynamoDB for workspace metadata
+
    - EBS volumes for persistent workspace storage
 
-5. **Security Layer**
-   - Zero Trust network policies
-   - RBAC with IAM Roles for Service Accounts (IRSA)
+#### Add-ons
+
+- **EBS CSI Driver**: Persistent storage voor workspaces5. **Security Layer**
+
+- **AWS Load Balancer Controller**: Automatische ALB provisioning   - Zero Trust network policies
+
+- **CoreDNS**: Internal service discovery   - RBAC with IAM Roles for Service Accounts (IRSA)
+
    - Encryption at rest and in transit
-   - Security groups and NACLs
+
+---   - Security groups and NACLs
+
+
+
+### 3. **Application Layer**---
+
+
+
+#### HR Portal## 3. Design Principles
+
+- **Frontend**: React SPA (Single Page Application)
+
+- **Backend**: Node.js + Express REST API### Zero Trust Architecture
+
+- **Features**:**"Never trust, always verify"**
+
+  - Employee CRUD operations
+
+  - Workspace provisioning trigger- Default deny-all network policies
+
+  - Email notification dispatch- Explicit allow rules for required communication
+
+- Least privilege access at all layers
+
+#### Workspaces- Continuous verification and monitoring
+
+- **Image**: code-server (VS Code in browser)
+
+- **Storage**: Persistent volumes per employee### Infrastructure as Code (IaC)
+
+- **Isolation**: Dedicated pod per employee- All infrastructure defined in Terraform
+
+- **Access**: Unique subdomain routing- Version-controlled and repeatable deployments
+
+- Modular design for reusability
+
+---- Clear separation of concerns
+
+
+
+### 4. **Data Layer**### Cloud-Native Design
+
+- Kubernetes-native applications
+
+#### DynamoDB Table- Containerized workloads
+
+```- Declarative configuration
+
+Table: innovatech-employees- Self-healing and auto-scaling
+
+Primary Key: employeeId (String)
+
+Attributes:### Security by Design
+
+  - email (String)- Multiple layers of defense
+
+  - name (String)- Encryption everywhere
+
+  - workspaceUrl (String)- Principle of least privilege
+
+  - status (String)- Audit logging enabled
+
+  - createdAt (Number)
+
+```### Cost Optimization
+
+- Right-sized resources
+
+#### Systems Manager Parameters- Auto-scaling based on demand
+
+- `/innovatech/ses/sender-email`: SES verified sender- Reserved capacity for predictable workloads
+
+- `/innovatech/lb/dns-name`: LoadBalancer DNS- Resource tagging for cost allocation
+
+- Additional config parameters
 
 ---
-
-## 3. Design Principles
-
-### Zero Trust Architecture
-**"Never trust, always verify"**
-
-- Default deny-all network policies
-- Explicit allow rules for required communication
-- Least privilege access at all layers
-- Continuous verification and monitoring
-
-### Infrastructure as Code (IaC)
-- All infrastructure defined in Terraform
-- Version-controlled and repeatable deployments
-- Modular design for reusability
-- Clear separation of concerns
-
-### Cloud-Native Design
-- Kubernetes-native applications
-- Containerized workloads
-- Declarative configuration
-- Self-healing and auto-scaling
-
-### Security by Design
-- Multiple layers of defense
-- Encryption everywhere
-- Principle of least privilege
-- Audit logging enabled
-
-### Cost Optimization
-- Right-sized resources
-- Auto-scaling based on demand
-- Reserved capacity for predictable workloads
-- Resource tagging for cost allocation
 
 ---
 
 ## 4. Component Architecture
 
+### 5. **Email Service**
+
 ### 4.1 VPC Architecture
 
-**Design**: Multi-AZ VPC with public and private subnets
+#### AWS SES
 
-```
-VPC: 10.0.0.0/16
+- **Region**: eu-west-1**Design**: Multi-AZ VPC with public and private subnets
 
-Public Subnets (ALB):
+- **Template**: Employee onboarding email
+
+- **Content**: Workspace URL + login instructions```
+
+- **Verification**: Sender email must be verifiedVPC: 10.0.0.0/16
+
+
+
+---Public Subnets (ALB):
+
 - 10.0.0.0/20  (AZ-1)
-- 10.0.16.0/20 (AZ-2)
+
+## 🔄 Employee Onboarding Flow- 10.0.16.0/20 (AZ-2)
+
 - 10.0.32.0/20 (AZ-3)
 
-Private Subnets (EKS Nodes):
+```mermaid
+
+%%{init: {'theme':'dark', 'themeVariables': { 'primaryColor':'#4a9eff','primaryTextColor':'#fff'}}}%%Private Subnets (EKS Nodes):
+
 - 10.0.48.0/20  (AZ-1)
-- 10.0.64.0/20  (AZ-2)
-- 10.0.80.0/20  (AZ-3)
+
+sequenceDiagram- 10.0.64.0/20  (AZ-2)
+
+    participant HR as 👤 HR User- 10.0.80.0/20  (AZ-3)
+
+    participant Portal as 🖥️ HR Portal```
+
+    participant Backend as ⚙️ Backend API
+
+    participant DB as 🗄️ DynamoDB**Justification**:
+
+    participant K8s as ☸️ Kubernetes- Multi-AZ for high availability (99.99% SLA)
+
+    participant Pod as 💻 Workspace Pod- Private subnets protect workloads from direct internet access
+
+    participant SES as 📧 AWS SES- Public subnets only for load balancers
+
+    participant Emp as 👨‍💻 Employee- /20 subnets provide ~4000 IPs per subnet (sufficient for growth)
+
+
+
+    HR->>Portal: 1. Fill employee form### 4.2 EKS Cluster
+
+    Portal->>Backend: 2. POST /api/employees
+
+    Backend->>DB: 3. Write employee record**Configuration**:
+
+    DB-->>Backend: 4. Confirm write- Kubernetes version: 1.28
+
+    Backend->>K8s: 5. Create workspace Job- Node group: 3 t3.medium instances (min: 2, max: 6)
+
+    K8s->>Pod: 6. Deploy workspace pod- Managed node group with auto-scaling
+
+    Pod-->>K8s: 7. Pod running- Private API endpoint + public access
+
+    K8s-->>Backend: 8. Workspace URL ready
+
+    Backend->>SES: 9. Send email with credentials**Add-ons**:
+
+    SES-->>Emp: 10. Email delivered- VPC CNI (pod networking)
+
+    Backend-->>Portal: 11. Success response- CoreDNS (DNS resolution)
+
+    Portal-->>HR: 12. Show confirmation- kube-proxy (service networking)
+
+    Emp->>Pod: 13. Access workspace via URL- EBS CSI driver (persistent volumes)
+
 ```
 
 **Justification**:
-- Multi-AZ for high availability (99.99% SLA)
-- Private subnets protect workloads from direct internet access
-- Public subnets only for load balancers
-- /20 subnets provide ~4000 IPs per subnet (sufficient for growth)
 
-### 4.2 EKS Cluster
+---- Managed node group reduces operational overhead
 
-**Configuration**:
-- Kubernetes version: 1.28
-- Node group: 3 t3.medium instances (min: 2, max: 6)
-- Managed node group with auto-scaling
-- Private API endpoint + public access
-
-**Add-ons**:
-- VPC CNI (pod networking)
-- CoreDNS (DNS resolution)
-- kube-proxy (service networking)
-- EBS CSI driver (persistent volumes)
-
-**Justification**:
-- Managed node group reduces operational overhead
 - t3.medium provides good balance (2 vCPU, 4GB RAM)
-- Auto-scaling handles variable workspace demand
+
+## 🔐 Security Architecture- Auto-scaling handles variable workspace demand
+
 - Private endpoint ensures secure control plane access
 
-### 4.3 HR Portal
+### Authentication & Authorization
 
-**Architecture**: Microservices pattern
+- **RBAC**: Kubernetes Role-Based Access Control### 4.3 HR Portal
 
-**Backend** (Node.js/Express):
-- RESTful API for employee management
-- Kubernetes client for workspace provisioning
-- DynamoDB SDK for data persistence
+- **Service Accounts**: Dedicated per namespace
+
+- **IAM Roles**: EKS pods use IRSA (IAM Roles for Service Accounts)**Architecture**: Microservices pattern
+
+
+
+### Network Security**Backend** (Node.js/Express):
+
+- **Private Subnets**: All compute in isolated subnets- RESTful API for employee management
+
+- **Security Groups**: Layered firewall rules- Kubernetes client for workspace provisioning
+
+- **Network Policies**: Pod-level traffic control- DynamoDB SDK for data persistence
+
 - JWT-based authentication
 
-**Frontend** (React - placeholder):
-- Single Page Application (SPA)
-- Employee management UI
-- Workspace status monitoring
-- Role-based UI elements
+### Secrets Management
 
-**Deployment**:
+- **AWS Systems Manager**: Centralized parameter store**Frontend** (React - placeholder):
+
+- **Kubernetes Secrets**: Sensitive config in cluster- Single Page Application (SPA)
+
+- **No Hardcoded Credentials**: All secrets externalized- Employee management UI
+
+- Workspace status monitoring
+
+---- Role-based UI elements
+
+
+
+## 📈 Scalability & Performance**Deployment**:
+
 - 2 replicas for high availability
-- Resource limits: 512Mi RAM, 500m CPU
-- Security context: non-root user, read-only filesystem
-- Health checks: liveness and readiness probes
+
+### Auto-Scaling- Resource limits: 512Mi RAM, 500m CPU
+
+- **Horizontal Pod Autoscaler**: Scale pods based on CPU/memory- Security context: non-root user, read-only filesystem
+
+- **Cluster Autoscaler**: Scale EC2 nodes dynamically- Health checks: liveness and readiness probes
+
+- **Load Balancer**: Distribute traffic across replicas
 
 ### 4.4 Employee Workspaces
 
-**Base Image**: code-server (VS Code in browser)
+### Resource Limits
 
-**Features**:
-- Pre-installed development tools (Git, Python, Node.js)
-- AWS SDK and CLI tools
-- VS Code extensions (Python, ESLint, AWS Toolkit)
-- Persistent storage (10GB EBS volume per workspace)
+```yaml**Base Image**: code-server (VS Code in browser)
 
-**Security**:
+resources:
+
+  requests:**Features**:
+
+    memory: "256Mi"- Pre-installed development tools (Git, Python, Node.js)
+
+    cpu: "250m"- AWS SDK and CLI tools
+
+  limits:- VS Code extensions (Python, ESLint, AWS Toolkit)
+
+    memory: "512Mi"- Persistent storage (10GB EBS volume per workspace)
+
+    cpu: "500m"
+
+```**Security**:
+
 - Password-protected access
-- Non-root user (UID 1000)
-- Network isolation via NetworkPolicies
-- No privilege escalation
 
-**Provisioning Flow**:
-```
-1. HR creates employee → API request
-2. Backend creates DynamoDB record
+---- Non-root user (UID 1000)
+
+- Network isolation via NetworkPolicies
+
+## 📊 Monitoring & Observability- No privilege escalation
+
+
+
+### CloudWatch Integration**Provisioning Flow**:
+
+- **Container Insights**: Real-time metrics```
+
+- **Log Groups**: Aggregated application logs1. HR creates employee → API request
+
+- **Alarms**: Critical error notifications2. Backend creates DynamoDB record
+
 3. Backend provisions K8s resources:
-   - PersistentVolumeClaim
-   - Secret (workspace password)
-   - Pod (code-server)
-   - Service (ClusterIP)
-   - Ingress (ALB)
+
+### Metrics Tracked   - PersistentVolumeClaim
+
+- Pod CPU/Memory usage   - Secret (workspace password)
+
+- API response times   - Pod (code-server)
+
+- DynamoDB read/write capacity   - Service (ClusterIP)
+
+- LoadBalancer request count   - Ingress (ALB)
+
 4. Workspace URL generated
-5. Employee receives credentials
+
+---5. Employee receives credentials
+
 ```
+
+## 🛠️ Deployment Strategy
 
 ### 4.5 DynamoDB Tables
 
-**Employees Table**:
-```
-Hash Key: employeeId (String)
-Attributes:
-  - firstName, lastName, email
-  - role, department, status
-  - createdAt, updatedAt, terminatedAt
+### Infrastructure
 
-Global Secondary Indexes:
+1. **Terraform Apply**: Provision AWS resources**Employees Table**:
+
+2. **EKS Initialization**: Configure cluster access```
+
+3. **Add-on Installation**: Deploy CSI, LB controllerHash Key: employeeId (String)
+
+Attributes:
+
+### Applications  - firstName, lastName, email
+
+1. **Build Docker Images**: CI pipeline builds images  - role, department, status
+
+2. **Push to ECR**: Images stored in registry  - createdAt, updatedAt, terminatedAt
+
+3. **kubectl apply**: Deploy K8s manifests
+
+4. **Verify Deployments**: Check pod statusGlobal Secondary Indexes:
+
   - EmailIndex (email)
-  - StatusIndex (status)
+
+---  - StatusIndex (status)
+
 ```
+
+## 💾 Data Flow
 
 **Workspaces Table**:
-```
-Hash Key: workspaceId (String)
-Attributes:
-  - employeeId
-  - name, url, status
-  - createdAt
 
-Global Secondary Index:
-  - EmployeeIndex (employeeId)
-```
+``````
 
-**Configuration**:
-- On-demand billing mode (pay per request)
-- Point-in-time recovery enabled
-- Server-side encryption enabled
-- VPC endpoint for private access
+HR Portal FormHash Key: workspaceId (String)
+
+    ↓Attributes:
+
+Backend API (Express)  - employeeId
+
+    ↓  - name, url, status
+
+DynamoDB Write  - createdAt
+
+    ↓
+
+Kubernetes Job CreationGlobal Secondary Index:
+
+    ↓  - EmployeeIndex (employeeId)
+
+Workspace Pod Provisioning```
+
+    ↓
+
+LoadBalancer Routing Update**Configuration**:
+
+    ↓- On-demand billing mode (pay per request)
+
+SES Email Trigger- Point-in-time recovery enabled
+
+    ↓- Server-side encryption enabled
+
+Employee Access- VPC endpoint for private access
+
+```
 
 ### 4.6 VPC Endpoints
 
-**Gateway Endpoints** (no cost):
-- S3 (required for ECR image layers)
-- DynamoDB (employee/workspace data)
-
-**Interface Endpoints** ($7.50/month each):
-- ECR API (pull container images)
-- ECR DKR (Docker registry)
-- CloudWatch Logs (centralized logging)
-- EC2 (EKS node operations)
-- STS (IAM authentication)
-
-**Benefits**:
-- No NAT gateway data transfer costs for AWS services
-- Enhanced security (traffic stays within AWS network)
-- Lower latency
-- Meet compliance requirements (no internet transit)
-
 ---
 
-## 5. Zero Trust Implementation
+**Gateway Endpoints** (no cost):
 
-### Principle: "Never Trust, Always Verify"
+## 🔧 Terraform Modules- S3 (required for ECR image layers)
+
+- DynamoDB (employee/workspace data)
+
+| Module | Purpose |
+
+|--------|---------|**Interface Endpoints** ($7.50/month each):
+
+| **vpc** | Network infrastructure |- ECR API (pull container images)
+
+| **eks** | Kubernetes cluster |- ECR DKR (Docker registry)
+
+| **iam** | Roles and policies |- CloudWatch Logs (centralized logging)
+
+| **dynamodb** | NoSQL database |- EC2 (EKS node operations)
+
+| **ecr** | Container registry |- STS (IAM authentication)
+
+| **security-groups** | Firewall rules |
+
+| **ebs-csi** | Persistent storage |**Benefits**:
+
+| **systems-manager** | Config management |- No NAT gateway data transfer costs for AWS services
+
+| **monitoring** | CloudWatch setup |- Enhanced security (traffic stays within AWS network)
+
+- Lower latency
+
+---- Meet compliance requirements (no internet transit)
+
+
+
+## 📝 Key Design Decisions---
+
+
+
+### ✅ Waarom EKS?## 5. Zero Trust Implementation
+
+- Managed Kubernetes service
+
+- Auto-updates en security patches### Principle: "Never Trust, Always Verify"
+
+- Native AWS service integratie
 
 ### Network Micro-Segmentation
 
-**Default Deny**:
-```yaml
-# All namespaces start with default-deny-all
+### ✅ Waarom DynamoDB?
+
+- Serverless, geen capacity planning**Default Deny**:
+
+- Single-digit millisecond latency```yaml
+
+- Auto-scaling read/write capacity# All namespaces start with default-deny-all
+
 apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: default-deny-all
-spec:
+
+### ✅ Waarom code-server?kind: NetworkPolicy
+
+- Browser-based development environmentmetadata:
+
+- No local setup required  name: default-deny-all
+
+- Consistent experiencespec:
+
   podSelector: {}
-  policyTypes:
-  - Ingress
-  - Egress
-```
 
-**Explicit Allow Rules**:
+### ✅ Waarom Terraform?  policyTypes:
 
-1. **HR Frontend → Backend**
+- Infrastructure as Code  - Ingress
+
+- Version controlled infrastructure  - Egress
+
+- Reproducible deployments```
+
+
+
+---**Explicit Allow Rules**:
+
+
+
+## 🚀 Future Enhancements1. **HR Frontend → Backend**
+
    - Only frontend pods can reach backend
-   - Only on port 3000
 
-2. **HR Backend → AWS Services**
-   - Only HTTPS (443) to VPC endpoints
-   - DNS resolution to CoreDNS
+- [ ] Multi-region deployment   - Only on port 3000
 
-3. **Ingress → Applications**
+- [ ] Backup and disaster recovery
+
+- [ ] Advanced workspace templates2. **HR Backend → AWS Services**
+
+- [ ] SSO integration (SAML/OAuth)   - Only HTTPS (443) to VPC endpoints
+
+- [ ] Cost optimization with Spot instances   - DNS resolution to CoreDNS
+
+- [ ] GitOps with ArgoCD
+
+- [ ] Service mesh (Istio) for advanced traffic management3. **Ingress → Applications**
+
    - Only ALB can reach application pods
-   - Specific ports only
 
-4. **Workspace Isolation**
-   - Workspaces cannot communicate with each other
+---   - Specific ports only
+
+
+
+**Last Updated**: November 2025  4. **Workspace Isolation**
+
+**Architecture Version**: 1.0   - Workspaces cannot communicate with each other
+
    - Workspaces can reach internet (for development)
    - Workspaces cannot reach other namespaces
 

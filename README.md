@@ -1,176 +1,349 @@
-# Employee Lifecycle Automation & Virtual Workspaces on AWS EKS
+# InnovaTech Case Study 3 - Employee Lifecycle Management# Employee Lifecycle Automation & Virtual Workspaces on AWS EKS
 
-## 🎯 Project Overview
 
-**Innovatech Solutions** - End-to-End Employee Lifecycle Automation with Virtual Workspaces on AWS EKS using Zero Trust Architecture.
 
-This project delivers a fully automated employee lifecycle management solution that includes:
+> **Automated HR & Workspace Management op AWS met Terraform, EKS, en DynamoDB**## 🎯 Project Overview
+
+
+
+Een volledig geautomatiseerd systeem voor employee onboarding waarbij nieuwe medewerkers automatisch een workspace krijgen toegewezen met SES email notificaties.**Innovatech Solutions** - End-to-End Employee Lifecycle Automation with Virtual Workspaces on AWS EKS using Zero Trust Architecture.
+
+
+
+---This project delivers a fully automated employee lifecycle management solution that includes:
+
 - Automated employee onboarding and offboarding
-- Virtual workspace provisioning (VS Code in browser)
-- Zero Trust security architecture
-- Kubernetes-based infrastructure on AWS EKS
-- Infrastructure as Code with Terraform
-- DynamoDB for employee data storage
-- Secure VPC endpoints for private AWS service connectivity
 
-## 📋 Table of Contents
+## 🚀 Quick Start- Virtual workspace provisioning (VS Code in browser)
+
+- Zero Trust security architecture
+
+```powershell- Kubernetes-based infrastructure on AWS EKS
+
+# 1. Clone repository- Infrastructure as Code with Terraform
+
+git clone https://github.com/i546927MehdiCetinkaya/casestudy3.git- DynamoDB for employee data storage
+
+cd casestudy3- Secure VPC endpoints for private AWS service connectivity
+
+
+
+# 2. Configureer AWS credentials## 📋 Table of Contents
+
+# Stel je AWS_ACCESS_KEY_ID en AWS_SECRET_ACCESS_KEY in
 
 - [Features](#features)
-- [Architecture](#architecture)
-- [Prerequisites](#prerequisites)
-- [Quick Start](#quick-start)
-- [Deployment Guide](#deployment-guide)
+
+# 3. Deploy infrastructuur- [Architecture](#architecture)
+
+cd terraform- [Prerequisites](#prerequisites)
+
+terraform init- [Quick Start](#quick-start)
+
+terraform apply- [Deployment Guide](#deployment-guide)
+
 - [Usage](#usage)
-  - [Getting Access Information](#getting-access-information)
-  - [HR Portal Access](#hr-portal-access)
+
+# 4. Verkrijg cluster credentials  - [Getting Access Information](#getting-access-information)
+
+aws eks update-kubeconfig --name innovatech-cluster --region eu-west-1  - [HR Portal Access](#hr-portal-access)
+
   - [Employee Management](#-employee-management)
-  - [Workspace Access](#️-workspace-access)
-  - [Monitoring & Operations](#-monitoring--operations)
-  - [CI/CD Workflows](#-cicd-workflows)
+
+# 5. Deploy applicaties  - [Workspace Access](#️-workspace-access)
+
+kubectl apply -f ../kubernetes/  - [Monitoring & Operations](#-monitoring--operations)
+
+```  - [CI/CD Workflows](#-cicd-workflows)
+
   - [Security Operations](#️-security-operations)
-  - [Cost Monitoring](#-cost-monitoring)
+
+---  - [Cost Monitoring](#-cost-monitoring)
+
 - [Security](#security)
-- [Cost Management](#cost-management)
+
+## 📋 Wat doet dit systeem?- [Cost Management](#cost-management)
+
 - [Testing](#testing)
-- [Troubleshooting](#troubleshooting)
+
+Dit project implementeert een **geautomatiseerde employee lifecycle management** oplossing:- [Troubleshooting](#troubleshooting)
+
 - [Quick Reference](#-quick-reference)
-- [FAQ](#-faq)
-- [Contributing](#contributing)
 
----
+1. **HR Portal**: Webapplicatie waar HR nieuwe medewerkers kan aanmaken- [FAQ](#-faq)
 
-## 🎬 Getting Started Tutorial
+2. **Automatische Workspace**: Elk nieuwe medewerker krijgt automatisch een eigen code-server workspace- [Contributing](#contributing)
 
-### 5-Minute Quickstart
+3. **Email Notificatie**: SES stuurt automatisch login credentials naar de medewerker
 
-**1. Deploy via GitHub Actions (Easiest)**
+4. **Cloud Native**: Draait volledig op AWS EKS met Kubernetes orchestratie---
+
+
+
+---## 🎬 Getting Started Tutorial
+
+
+
+## 🏗️ Architectuur### 5-Minute Quickstart
+
+
+
+Zie [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) voor een gedetailleerd overzicht van de infrastructuur en componenten.**1. Deploy via GitHub Actions (Easiest)**
+
 ```bash
-# Fork this repo, then:
-git clone https://github.com/YOUR-USERNAME/casestudy3.git
-cd casestudy3
-git add .
-git commit --allow-empty -m "Trigger deployment"
-git push origin main
+
+**Hoofdcomponenten:**# Fork this repo, then:
+
+- **AWS EKS**: Kubernetes cluster voor container orchestratiegit clone https://github.com/YOUR-USERNAME/casestudy3.git
+
+- **DynamoDB**: NoSQL database voor employee datacd casestudy3
+
+- **ECR**: Container registry voor Docker imagesgit add .
+
+- **VPC**: Geïsoleerd netwerk met private/public subnetsgit commit --allow-empty -m "Trigger deployment"
+
+- **SES**: Email service voor automated notificatiesgit push origin main
+
+- **Systems Manager**: Parameter store voor configuratie
 
 # Monitor
-gh run watch
+
+---gh run watch
+
 ```
 
+## 📁 Project Structuur
+
 **2. Access Your Infrastructure**
-```bash
-# Configure kubectl
-aws eks update-kubeconfig --region eu-west-1 --name innovatech-employee-lifecycle
 
-# Check status
-kubectl get pods --all-namespaces
+``````bash
 
-# Get API URL
-kubectl get ingress -n hr-portal
+casestudy3/# Configure kubectl
+
+├── applications/          # Applicatie codeaws eks update-kubeconfig --region eu-west-1 --name innovatech-employee-lifecycle
+
+│   ├── hr-portal/        # HR management frontend + backend
+
+│   └── workspace/        # Code-server workspace configuratie# Check status
+
+├── terraform/            # Infrastructure as Codekubectl get pods --all-namespaces
+
+│   └── modules/         # Herbruikbare Terraform modules
+
+├── kubernetes/           # K8s manifests# Get API URL
+
+├── scripts/             # Helper scripts voor deploymentkubectl get ingress -n hr-portal
+
+└── docs/                # Documentatie```
+
 ```
 
 **3. Create Your First Employee**
-```bash
+
+---```bash
+
 export API_URL="http://$(kubectl get ingress hr-portal-ingress -n hr-portal -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')"
 
+## 🔑 Belangrijke Features
+
 curl -X POST $API_URL/api/employees \
-  -H "Content-Type: application/json" \
-  -d '{
-    "firstName": "Jane",
-    "lastName": "Smith",
+
+### ✅ Volledig Geautomatiseerd  -H "Content-Type: application/json" \
+
+- Infrastructure as Code met Terraform  -d '{
+
+- GitOps deployment workflow    "firstName": "Jane",
+
+- Automatische DNS en LoadBalancer configuratie    "lastName": "Smith",
+
     "email": "jane.smith@innovatech.com",
-    "role": "developer",
-    "department": "Engineering"
-  }'
-```
+
+### ✅ Schaalbaar & Veilig    "role": "developer",
+
+- Auto-scaling workloads    "department": "Engineering"
+
+- Network policies voor isolatie  }'
+
+- RBAC voor toegangscontrole```
+
+- Secrets management via Systems Manager
 
 **4. Access the Workspace**
-```bash
-# List workspaces
-kubectl get pods -n workspaces
+
+### ✅ Monitoring & Observability```bash
+
+- CloudWatch voor logs en metrics# List workspaces
+
+- Container insightskubectl get pods -n workspaces
+
+- Resource tagging voor cost tracking
 
 # Port forward to access
-kubectl port-forward <workspace-pod> 8443:8080 -n workspaces
+
+---kubectl port-forward <workspace-pod> 8443:8080 -n workspaces
+
 # Open browser: http://localhost:8443
-```
 
-**Done! 🎉** Your complete employee lifecycle automation platform is running!
+## 🛠️ Technologie Stack```
 
----
 
-## ❓ FAQ
 
-### General Questions
+| Component | Technologie |**Done! 🎉** Your complete employee lifecycle automation platform is running!
 
-**Q: How long does deployment take?**  
-A: Full automated deployment via GitHub Actions takes ~8-10 minutes. Manual deployment takes ~30-40 minutes.
+|-----------|------------|
+
+| **Cloud Provider** | AWS |---
+
+| **Infrastructure** | Terraform |
+
+| **Orchestratie** | Kubernetes (EKS) |## ❓ FAQ
+
+| **Database** | DynamoDB |
+
+| **Frontend** | React |### General Questions
+
+| **Backend** | Node.js + Express |
+
+| **Container Runtime** | Docker |**Q: How long does deployment take?**  
+
+| **Email** | AWS SES |A: Full automated deployment via GitHub Actions takes ~8-10 minutes. Manual deployment takes ~30-40 minutes.
+
+| **CI/CD** | GitHub Actions |
 
 **Q: What does it cost to run this?**  
-A: Approximately **$350-370/month** in AWS costs. See [Cost Management](#-cost-management) for breakdown and optimization tips.
 
-**Q: Can I run this in a different AWS region?**  
+---A: Approximately **$350-370/month** in AWS costs. See [Cost Management](#-cost-management) for breakdown and optimization tips.
+
+
+
+## 📖 Documentatie**Q: Can I run this in a different AWS region?**  
+
 A: Yes! Update the `AWS_REGION` variable in `.github/workflows/deploy.yml` and `terraform/variables.tf`. Recommended regions: `eu-west-1`, `us-east-1`, `us-west-2`.
 
-**Q: Is this production-ready?**  
-A: The infrastructure is production-ready. For production use, add:
-- Authentication/Authorization (OAuth2, OIDC)
-- TLS/SSL certificates (AWS ACM)
-- Web Application Firewall (WAF)
-- Backup and disaster recovery procedures
-- Monitoring and alerting (PagerDuty, Slack)
+- **[ARCHITECTURE.md](docs/ARCHITECTURE.md)**: Gedetailleerde architectuur met diagram
 
-### Deployment Questions
+- **[HR Portal README](applications/hr-portal/README.md)**: HR applicatie documentatie**Q: Is this production-ready?**  
+
+A: The infrastructure is production-ready. For production use, add:
+
+---- Authentication/Authorization (OAuth2, OIDC)
+
+- TLS/SSL certificates (AWS ACM)
+
+## 🧪 Testing- Web Application Firewall (WAF)
+
+- Backup and disaster recovery procedures
+
+```powershell- Monitoring and alerting (PagerDuty, Slack)
+
+# Test HR Portal backend
+
+cd applications/hr-portal/backend### Deployment Questions
+
+npm test
 
 **Q: Why did my deployment fail?**  
-A: Common causes:
-1. AWS service quota limits (check EKS, VPC limits)
+
+# Test employee creation workflowA: Common causes:
+
+.\scripts\test-employee-creation.ps11. AWS service quota limits (check EKS, VPC limits)
+
 2. IAM permission issues (verify GitHub OIDC role)
-3. S3 backend not initialized (run `setup-terraform-backend.ps1`)
-4. Terraform state lock (check DynamoDB table)
+
+# Verify workspace deployment3. S3 backend not initialized (run `setup-terraform-backend.ps1`)
+
+.\scripts\test-workspace.ps14. Terraform state lock (check DynamoDB table)
+
+```
 
 Check deployment logs: `gh run view --log-failed`
 
+---
+
 **Q: How do I update just the application code?**  
-A: Just push changes to the `applications/` directory. GitHub Actions will:
+
+## 🔄 WorkflowA: Just push changes to the `applications/` directory. GitHub Actions will:
+
 1. Rebuild only the changed container images
-2. Push to ECR
-3. Restart the affected pods
 
-**Q: Can I deploy to an existing VPC/EKS cluster?**  
-A: Yes! Modify `terraform/main.tf` to import existing resources or use data sources instead of creating new ones.
+1. **HR voegt nieuwe employee toe** via HR Portal2. Push to ECR
 
-**Q: How do I roll back a deployment?**  
+2. **Backend schrijft naar DynamoDB** met employee data3. Restart the affected pods
+
+3. **Kubernetes Job** wordt getriggerd voor workspace provisioning
+
+4. **Workspace Pod** wordt deployed met unieke subdomain**Q: Can I deploy to an existing VPC/EKS cluster?**  
+
+5. **LoadBalancer** wordt geconfigureerd met routingA: Yes! Modify `terraform/main.tf` to import existing resources or use data sources instead of creating new ones.
+
+6. **SES stuurt email** met login credentials naar employee
+
+7. **Employee** kan inloggen op persoonlijke workspace**Q: How do I roll back a deployment?**  
+
 A: GitHub Actions approach:
-```bash
+
+---```bash
+
 # Via git revert
-git revert HEAD
+
+## 🚧 Troubleshootinggit revert HEAD
+
 git push origin main
 
-# Via re-running old deployment
+**Problem**: Terraform apply faalt  
+
+**Solution**: Check AWS credentials en quota limits# Via re-running old deployment
+
 gh run rerun <old-run-id>
-```
+
+**Problem**: Workspace niet bereikbaar  ```
+
+**Solution**: Wacht op LoadBalancer provisioning (5-10 min)
 
 Manual approach:
-```bash
-cd terraform
+
+**Problem**: Email niet ontvangen  ```bash
+
+**Solution**: Verifieer SES email address en check Spam foldercd terraform
+
 terraform state pull > backup.tfstate
-# Restore infrastructure to previous state
-terraform apply -state=backup.tfstate
+
+**Problem**: Pod crasht  # Restore infrastructure to previous state
+
+**Solution**: `kubectl logs <pod-name>` voor error detailsterraform apply -state=backup.tfstate
+
 ```
+
+---
 
 ### Usage Questions
 
-**Q: How do I add authentication to the HR Portal?**  
-A: Implement in `applications/hr-portal/backend/`:
-1. Add auth middleware (JWT, OAuth2)
-2. Integrate with identity provider (AWS Cognito, Auth0)
-3. Update Kubernetes ingress with auth annotations
-4. Add IRSA permissions for Cognito
+## 📝 Licentie
 
-**Q: Can employees access each other's workspaces?**  
+**Q: How do I add authentication to the HR Portal?**  
+
+Dit project is gemaakt voor educatieve doeleinden (Fontys Case Study 3).A: Implement in `applications/hr-portal/backend/`:
+
+1. Add auth middleware (JWT, OAuth2)
+
+---2. Integrate with identity provider (AWS Cognito, Auth0)
+
+3. Update Kubernetes ingress with auth annotations
+
+## 👨‍💻 Auteur4. Add IRSA permissions for Cognito
+
+
+
+**Mehdi Cetinkaya** - Fontys Semester 3 Case Study 3**Q: Can employees access each other's workspaces?**  
+
 A: No! Network policies enforce isolation:
-- Each workspace runs in isolated pod
+
+---- Each workspace runs in isolated pod
+
 - NetworkPolicy blocks inter-workspace communication
-- RBAC limits access to own resources only
+
+**Status**: ✅ Production Ready | 🔒 Secure | 📈 Scalable- RBAC limits access to own resources only
+
 
 **Q: How do I customize the workspace environment?**  
 A: Edit `applications/workspace/Dockerfile`:
