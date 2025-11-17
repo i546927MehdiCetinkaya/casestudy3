@@ -3,23 +3,41 @@ const { body, validationResult } = require('express-validator');
 const { v4: uuidv4 } = require('uuid');
 const dynamodbService = require('../services/dynamodb');
 const workspaceService = require('../services/workspace');
+const rbacService = require('../services/rbac');
 const logger = require('../utils/logger');
 
 const router = express.Router();
 
-// Get all employees
+// Get all employees (with RBAC filtering)
 router.get('/', async (req, res, next) => {
   try {
-    const { status } = req.query;
-    const employees = await dynamodbService.getAllEmployees(status);
-    res.json({ employees });
+    const currentEmployeeId = req.headers['x-employee-id'];
+    
+    if (!currentEmployeeId) {
+      const { status } = req.query;
+      const employees = await dynamodbService.getAllEmployees(status);
+      return res.json({ employees });
+    }
+
+    // Get filtered employees based on RBAC
+    const currentEmployee = await dynamodbService.getEmployee(currentEmployeeId);
+    const employees = await rbacService.getEmployeesByDepartment(currentEmployee);
+    
+    res.json({ 
+      employees,
+      rbac: {
+        role: currentEmployee.role,
+        department: currentEmployee.department,
+        permissions: rbacService.PERMISSIONS[currentEmployee.role]
+      }
+    });
   } catch (error) {
     next(error);
   }
 });
 
-// Get employee by ID
-router.get('/:id', async (req, res, next) => {
+// Get employee by ID (with RBAC check)
+router.get('/:id', rbacService.requirePermission('employee', 'read'), async (req, res, next) => {
   try {
     const employee = await dynamodbService.getEmployee(req.params.id);
     if (!employee) {

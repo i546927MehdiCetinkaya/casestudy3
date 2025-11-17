@@ -1,0 +1,246 @@
+# RBAC Configuration per Department
+# Each department gets isolated namespace and permissions
+
+---
+# HR Department - Full Access
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dept-hr
+  labels:
+    department: hr
+    rbac: enabled
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: hr-admin-role
+  namespace: dept-hr
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "configmaps", "secrets", "persistentvolumeclaims"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "statefulsets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: hr-admin-binding
+  namespace: dept-hr
+subjects:
+- kind: ServiceAccount
+  name: hr-service-account
+  namespace: dept-hr
+roleRef:
+  kind: Role
+  name: hr-admin-role
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: hr-service-account
+  namespace: dept-hr
+
+---
+# Engineering Department - Developer Access
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dept-engineering
+  labels:
+    department: engineering
+    rbac: enabled
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: developer-role
+  namespace: dept-engineering
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "configmaps", "persistentvolumeclaims"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["pods/log"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["pods/exec"]
+  verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: developer-binding
+  namespace: dept-engineering
+subjects:
+- kind: ServiceAccount
+  name: engineering-service-account
+  namespace: dept-engineering
+roleRef:
+  kind: Role
+  name: developer-role
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: engineering-service-account
+  namespace: dept-engineering
+
+---
+# Manager Role - Department-wide read access
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: manager-role
+  namespace: dept-engineering
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "configmaps", "persistentvolumeclaims"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["pods/log"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: manager-binding
+  namespace: dept-engineering
+subjects:
+- kind: ServiceAccount
+  name: manager-service-account
+  namespace: dept-engineering
+roleRef:
+  kind: Role
+  name: manager-role
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: manager-service-account
+  namespace: dept-engineering
+
+---
+# Sales Department
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dept-sales
+  labels:
+    department: sales
+    rbac: enabled
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: sales-role
+  namespace: dept-sales
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: sales-binding
+  namespace: dept-sales
+subjects:
+- kind: ServiceAccount
+  name: sales-service-account
+  namespace: dept-sales
+roleRef:
+  kind: Role
+  name: sales-role
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sales-service-account
+  namespace: dept-sales
+
+---
+# Marketing Department
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dept-marketing
+  labels:
+    department: marketing
+    rbac: enabled
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: marketing-role
+  namespace: dept-marketing
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: marketing-binding
+  namespace: dept-marketing
+subjects:
+- kind: ServiceAccount
+  name: marketing-service-account
+  namespace: dept-marketing
+roleRef:
+  kind: Role
+  name: marketing-role
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: marketing-service-account
+  namespace: dept-marketing
+
+---
+# Operations Department
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dept-operations
+  labels:
+    department: operations
+    rbac: enabled
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: operations-role
+  namespace: dept-operations
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: operations-binding
+  namespace: dept-operations
+subjects:
+- kind: ServiceAccount
+  name: operations-service-account
+  namespace: dept-operations
+roleRef:
+  kind: Role
+  name: operations-role
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: operations-service-account
+  namespace: dept-operations

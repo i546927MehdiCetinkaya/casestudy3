@@ -32,6 +32,13 @@ RUN npm install -g \
     prettier \
     @aws-sdk/client-s3
 
+# Install tree for folder visualization
+RUN apt-get update && apt-get install -y tree && rm -rf /var/lib/apt/lists/*
+
+# Copy RBAC initialization script
+COPY init-rbac.sh /usr/local/bin/init-rbac.sh
+RUN chmod +x /usr/local/bin/init-rbac.sh
+
 # Create workspace directory
 RUN mkdir -p /home/coder/workspace && chown -R coder:coder /home/coder/workspace
 
@@ -54,5 +61,5 @@ WORKDIR /home/coder/workspace
 # Expose port
 EXPOSE 8080
 
-# Start code-server
-CMD ["code-server", "--bind-addr", "0.0.0.0:8080", "/home/coder/workspace"]
+# Use RBAC initialization script as entrypoint
+ENTRYPOINT ["/usr/local/bin/init-rbac.sh"]
