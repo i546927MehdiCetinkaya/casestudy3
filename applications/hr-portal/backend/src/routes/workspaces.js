@@ -144,4 +144,45 @@ router.delete('/:employeeId', async (req, res, next) => {
   }
 });
 
+// Force cleanup a workspace by name (debug)
+router.delete('/debug/cleanup/:name', async (req, res) => {
+  try {
+    const k8s = require('@kubernetes/client-node');
+    const kc = new k8s.KubeConfig();
+    kc.loadFromCluster();
+    const k8sApi = kc.makeApiClient(k8s.CoreV1Api);
+    
+    const name = req.params.name;
+    const results = [];
+    
+    // Delete pod
+    try {
+      await k8sApi.deleteNamespacedPod(name, 'workspaces');
+      results.push(`Pod ${name} deleted`);
+    } catch (e) { results.push(`Pod: ${e.message}`); }
+    
+    // Delete service
+    try {
+      await k8sApi.deleteNamespacedService(name, 'workspaces');
+      results.push(`Service ${name} deleted`);
+    } catch (e) { results.push(`Service: ${e.message}`); }
+    
+    // Delete secret
+    try {
+      await k8sApi.deleteNamespacedSecret(`${name}-secret`, 'workspaces');
+      results.push(`Secret ${name}-secret deleted`);
+    } catch (e) { results.push(`Secret: ${e.message}`); }
+    
+    // Delete PVC
+    try {
+      await k8sApi.deleteNamespacedPersistentVolumeClaim(`${name}-pvc`, 'workspaces');
+      results.push(`PVC ${name}-pvc deleted`);
+    } catch (e) { results.push(`PVC: ${e.message}`); }
+    
+    res.json({ results });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 module.exports = router;

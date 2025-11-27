@@ -83,39 +83,30 @@ async function provisionWorkspace(employee) {
       logger.warn(`Step 1 failed (SSM): ${ssmError.message}, continuing...`);
     }
     
-    // 2. Create PersistentVolumeClaim
-    try {
-      await createPVC(workspaceName);
-      logger.info(`Step 2: PVC created for ${workspaceName}`);
-    } catch (pvcError) {
-      logger.error(`Step 2 failed (PVC): ${pvcError.message}, statusCode: ${pvcError.statusCode}, body: ${JSON.stringify(pvcError.body)}`);
-      throw pvcError;
-    }
-    
-    // 3. Create Secret for workspace credentials (still needed for code-server)
+    // 2. Create Secret for workspace credentials (still needed for code-server)
     try {
       await createSecret(workspaceName, temporaryPassword);
-      logger.info(`Step 3: Secret created for ${workspaceName}`);
+      logger.info(`Step 2: Secret created for ${workspaceName}`);
     } catch (secretError) {
-      logger.error(`Step 3 failed (Secret): ${secretError.message}`);
+      logger.error(`Step 2 failed (Secret): ${secretError.message}`);
       throw secretError;
     }
     
-    // 4. Create Pod for workspace
+    // 3. Create Pod for workspace (uses emptyDir, no PVC needed)
     try {
       await createPod(workspaceName, employee, workspaceId);
-      logger.info(`Step 4: Pod created for ${workspaceName}`);
+      logger.info(`Step 3: Pod created for ${workspaceName}`);
     } catch (podError) {
-      logger.error(`Step 4 failed (Pod): ${podError.message}`);
+      logger.error(`Step 3 failed (Pod): ${podError.message}`);
       throw podError;
     }
     
-    // 5. Create Service (LoadBalancer type for external access)
+    // 4. Create Service (LoadBalancer type for external access)
     try {
       await createService(workspaceName);
-      logger.info(`Step 5: Service created for ${workspaceName}`);
+      logger.info(`Step 4: Service created for ${workspaceName}`);
     } catch (serviceError) {
-      logger.error(`Step 5 failed (Service): ${serviceError.message}`);
+      logger.error(`Step 4 failed (Service): ${serviceError.message}`);
       throw serviceError;
     }
     
@@ -377,8 +368,8 @@ async function createPod(name, employee, workspaceId) {
           { name: 'tmp', mountPath: '/tmp' }
         ],
         resources: {
-          requests: { memory: '1Gi', cpu: '500m' },
-          limits: { memory: '2Gi', cpu: '1000m' }
+          requests: { memory: '512Mi', cpu: '250m' },
+          limits: { memory: '1Gi', cpu: '500m' }
         },
         securityContext: {
           runAsNonRoot: true,
@@ -388,10 +379,9 @@ async function createPod(name, employee, workspaceId) {
         }
       }],
       volumes: [
-        { 
-          name: 'workspace-storage', 
-          persistentVolumeClaim: { claimName: `${name}-pvc` } 
-        },
+        // Use emptyDir for now (no EBS CSI driver issues)
+        // TODO: Switch back to PVC once EBS CSI driver is properly configured
+        { name: 'workspace-storage', emptyDir: { sizeLimit: '5Gi' } },
         { name: 'tmp', emptyDir: {} }
       ]
     }
