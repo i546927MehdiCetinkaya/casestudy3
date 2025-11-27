@@ -1,62 +1,76 @@
-# Employee Workspace - VS Code in Browser (code-server)
-FROM codercom/code-server:latest
+# Employee Workspace - Linux Desktop with noVNC (XFCE in Browser)
+FROM ubuntu:22.04
 
-USER root
+ENV DEBIAN_FRONTEND=noninteractive
+ENV USER=employee
+ENV PASSWORD=changeme
+ENV VNC_RESOLUTION=1920x1080
+ENV VNC_PORT=5901
+ENV NOVNC_PORT=6080
 
-# Install development tools
+# Install desktop environment and VNC
 RUN apt-get update && apt-get install -y \
-    git \
+    xfce4 \
+    xfce4-goodies \
+    tightvncserver \
+    novnc \
+    websockify \
+    supervisor \
+    sudo \
     curl \
     wget \
+    git \
     vim \
     nano \
-    sudo \
+    firefox \
     python3 \
     python3-pip \
     nodejs \
     npm \
-    build-essential \
+    htop \
+    net-tools \
+    dbus-x11 \
+    xfonts-base \
+    xfonts-100dpi \
+    xfonts-75dpi \
+    fonts-liberation \
+    fonts-dejavu \
     && rm -rf /var/lib/apt/lists/*
 
-# Install additional tools
-RUN pip3 install --no-cache-dir --break-system-packages \
-    boto3 \
-    requests \
-    pylint \
-    black
+# Create user
+RUN useradd -m -s /bin/bash ${USER} && \
+    echo "${USER}:${PASSWORD}" | chpasswd && \
+    usermod -aG sudo ${USER} && \
+    echo "${USER} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 
-# Install global npm packages
-RUN npm install -g \
-    typescript \
-    eslint \
-    prettier \
-    @aws-sdk/client-s3
+# Setup VNC
+RUN mkdir -p /home/${USER}/.vnc && \
+    echo '#!/bin/bash\nstartxfce4 &' > /home/${USER}/.vnc/xstartup && \
+    chmod +x /home/${USER}/.vnc/xstartup && \
+    chown -R ${USER}:${USER} /home/${USER}
+
+# Create startup script
+RUN echo '#!/bin/bash\n\
+# Set VNC password from environment\n\
+echo "${PASSWORD}" | vncpasswd -f > /home/${USER}/.vnc/passwd\n\
+chmod 600 /home/${USER}/.vnc/passwd\n\
+chown ${USER}:${USER} /home/${USER}/.vnc/passwd\n\
+\n\
+# Start VNC server\n\
+su - ${USER} -c "vncserver :1 -geometry ${VNC_RESOLUTION} -depth 24"\n\
+\n\
+# Start noVNC (web-based VNC client)\n\
+websockify --web=/usr/share/novnc/ ${NOVNC_PORT} localhost:${VNC_PORT} &\n\
+\n\
+# Keep container running\n\
+tail -f /dev/null\n\
+' > /startup.sh && chmod +x /startup.sh
 
 # Create workspace directory
-RUN mkdir -p /home/coder/workspace && chown -R coder:coder /home/coder/workspace
+RUN mkdir -p /home/${USER}/workspace && chown -R ${USER}:${USER} /home/${USER}/workspace
 
-# Switch back to coder user
-USER coder
+WORKDIR /home/${USER}
 
-# Install VS Code extensions
-RUN code-server --install-extension ms-python.python && \
-    code-server --install-extension dbaeumer.vscode-eslint && \
-    code-server --install-extension esbenp.prettier-vscode && \
-    code-server --install-extension eamodio.gitlens && \
-    code-server --install-extension amazonwebservices.aws-toolkit-vscode
+EXPOSE 6080
 
-# Configure code-server
-COPY --chown=coder:coder config.yaml /home/coder/.config/code-server/config.yaml
-
-# Set working directory
-WORKDIR /home/coder/workspace
-
-# Expose port
-EXPOSE 8080
-
-# Remove default config so code-server uses environment variables
-RUN rm -f /home/coder/.config/code-server/config.yaml
-
-# Start code-server - it will use $PASSWORD env var for authentication
-# When no config file exists, code-server reads PASSWORD from env
-CMD ["code-server", "--bind-addr", "0.0.0.0:8080", "--auth", "password", "/home/coder/workspace"]
+CMD ["/startup.sh"]

@@ -342,17 +342,18 @@ async function createPod(name, employee, workspaceId) {
       // Use default service account - no special permissions needed for workspaces
       automountServiceAccountToken: false,
       containers: [{
-        name: 'code-server',
+        name: 'linux-desktop',
         image: `${ECR_REGISTRY}/employee-workspace:latest`,
         imagePullPolicy: 'Always',
         ports: [{
-          containerPort: 8080,
-          name: 'http'
+          containerPort: 6080,
+          name: 'novnc'
         }],
         env: [
           { name: 'EMPLOYEE_ID', value: employee.employeeId },
           { name: 'EMPLOYEE_EMAIL', value: employee.email },
           { name: 'EMPLOYEE_ROLE', value: employee.role },
+          { name: 'USER', value: 'employee' },
           { 
             name: 'PASSWORD', 
             valueFrom: { 
@@ -364,24 +365,23 @@ async function createPod(name, employee, workspaceId) {
           }
         ],
         volumeMounts: [
-          { name: 'workspace-storage', mountPath: '/home/coder/workspace' },
+          { name: 'workspace-storage', mountPath: '/home/employee/workspace' },
           { name: 'tmp', mountPath: '/tmp' }
         ],
         resources: {
-          requests: { memory: '512Mi', cpu: '250m' },
-          limits: { memory: '1Gi', cpu: '500m' }
+          requests: { memory: '1Gi', cpu: '500m' },
+          limits: { memory: '2Gi', cpu: '1000m' }
         },
+        // Linux desktop needs root for VNC setup, then drops to user
         securityContext: {
-          runAsNonRoot: true,
-          runAsUser: 1000,
-          allowPrivilegeEscalation: false,
-          capabilities: { drop: ['ALL'] }
+          runAsUser: 0,
+          allowPrivilegeEscalation: true
         }
       }],
       volumes: [
         // Use emptyDir for now (no EBS CSI driver issues)
         // TODO: Switch back to PVC once EBS CSI driver is properly configured
-        { name: 'workspace-storage', emptyDir: { sizeLimit: '5Gi' } },
+        { name: 'workspace-storage', emptyDir: { sizeLimit: '10Gi' } },
         { name: 'tmp', emptyDir: {} }
       ]
     }
@@ -409,7 +409,7 @@ async function createService(name) {
       ports: [{
         protocol: 'TCP',
         port: 80,
-        targetPort: 8080
+        targetPort: 6080
       }],
       type: 'LoadBalancer'
     }
