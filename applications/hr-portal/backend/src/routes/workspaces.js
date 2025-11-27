@@ -273,6 +273,35 @@ router.delete('/debug/db/:workspaceId', async (req, res) => {
   }
 });
 
+// Register a workspace manually (for fixing missing entries)
+router.post('/debug/register', async (req, res) => {
+  try {
+    const { employeeId, name, url, password } = req.body;
+    
+    if (!employeeId || !name || !url || !password) {
+      return res.status(400).json({ error: 'Missing required fields: employeeId, name, url, password' });
+    }
+    
+    const workspace = {
+      workspaceId: require('uuid').v4(),
+      employeeId,
+      name,
+      url,
+      status: 'active',
+      createdAt: new Date().toISOString(),
+      credentials: {
+        username: 'coder',
+        password
+      }
+    };
+    
+    await dynamodbService.createWorkspace(workspace);
+    res.json({ message: 'Workspace registered', workspace });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Rebuild workspace entries from K8s state
 router.post('/debug/rebuild', async (req, res) => {
   try {
