@@ -5,12 +5,41 @@ const ssmService = require('./ssm');
 const emailService = require('./email');
 const logger = require('../utils/logger');
 
+// Initialize Kubernetes client with fallback
 const kc = new k8s.KubeConfig();
-kc.loadFromCluster(); // Load in-cluster config when running in K8s
+let k8sApi = null;
+let k8sAppsApi = null;
+let k8sNetworkingApi = null;
+let k8sInitialized = false;
 
-const k8sApi = kc.makeApiClient(k8s.CoreV1Api);
-const k8sAppsApi = kc.makeApiClient(k8s.AppsV1Api);
-const k8sNetworkingApi = kc.makeApiClient(k8s.NetworkingV1Api);
+function initK8sClient() {
+  if (k8sInitialized) return true;
+  
+  try {
+    // Try to load in-cluster config first
+    kc.loadFromCluster();
+    k8sApi = kc.makeApiClient(k8s.CoreV1Api);
+    k8sAppsApi = kc.makeApiClient(k8s.AppsV1Api);
+    k8sNetworkingApi = kc.makeApiClient(k8s.NetworkingV1Api);
+    k8sInitialized = true;
+    logger.info('Kubernetes client initialized from in-cluster config');
+    return true;
+  } catch (error) {
+    logger.warn('Failed to load in-cluster config, trying default config:', error.message);
+    try {
+      kc.loadFromDefault();
+      k8sApi = kc.makeApiClient(k8s.CoreV1Api);
+      k8sAppsApi = kc.makeApiClient(k8s.AppsV1Api);
+      k8sNetworkingApi = kc.makeApiClient(k8s.NetworkingV1Api);
+      k8sInitialized = true;
+      logger.info('Kubernetes client initialized from default config');
+      return true;
+    } catch (defaultError) {
+      logger.error('Failed to initialize Kubernetes client:', defaultError.message);
+      return false;
+    }
+  }
+}
 
 const WORKSPACE_NAMESPACE = 'workspaces';
 const ECR_REGISTRY = process.env.ECR_REGISTRY || '920120424621.dkr.ecr.eu-west-1.amazonaws.com';
@@ -34,6 +63,11 @@ function sanitizeK8sName(name) {
  * Provision a new workspace for an employee
  */
 async function provisionWorkspace(employee) {
+  // Initialize Kubernetes client
+  if (!initK8sClient()) {
+    throw new Error('Kubernetes client not available. Cannot provision workspace.');
+  }
+
   const workspaceId = uuidv4();
   const workspaceName = sanitizeK8sName(`${employee.firstName}-${employee.lastName}`);
   const temporaryPassword = generateSecurePassword();
@@ -107,6 +141,11 @@ async function provisionWorkspace(employee) {
  * Deprovision workspace for an employee
  */
 async function deprovisionWorkspace(employeeId) {
+  // Initialize Kubernetes client
+  if (!initK8sClient()) {
+    throw new Error('Kubernetes client not available. Cannot deprovision workspace.');
+  }
+
   try {
     const workspace = await dynamodbService.getWorkspaceByEmployee(employeeId);
     if (!workspace) {
@@ -142,6 +181,11 @@ async function deprovisionWorkspace(employeeId) {
  * Get workspace status
  */
 async function getWorkspaceStatus(workspaceId) {
+  // Initialize Kubernetes client
+  if (!initK8sClient()) {
+    return { status: 'k8s_unavailable', error: 'Kubernetes client not available' };
+  }
+
   try {
     const workspace = await dynamodbService.getWorkspaceByEmployee(workspaceId);
     if (!workspace) {
