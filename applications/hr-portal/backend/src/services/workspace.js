@@ -348,7 +348,8 @@ async function createPod(name, employee, workspaceId) {
       }
     },
     spec: {
-      serviceAccountName: 'workspace-provisioner',
+      // Use default service account - no special permissions needed for workspaces
+      automountServiceAccountToken: false,
       containers: [{
         name: 'code-server',
         image: `${ECR_REGISTRY}/employee-workspace:latest`,
