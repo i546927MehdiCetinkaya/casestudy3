@@ -185,4 +185,57 @@ router.delete('/debug/cleanup/:name', async (req, res) => {
   }
 });
 
+// Sync DynamoDB with K8s - remove stale entries
+router.post('/debug/sync', async (req, res) => {
+  try {
+    const k8s = require('@kubernetes/client-node');
+    const kc = new k8s.KubeConfig();
+    kc.loadFromCluster();
+    const k8sApi = kc.makeApiClient(k8s.CoreV1Api);
+    
+    // Get running pods
+    const pods = await k8sApi.listNamespacedPod('workspaces');
+    const runningPodNames = new Set(pods.body.items.map(p => p.metadata.name));
+    
+    // Get all workspaces from DynamoDB
+    const workspaces = await dynamodbService.getAllWorkspaces();
+    
+    const results = {
+      checked: workspaces.length,
+      deleted: [],
+      kept: [],
+      updated: []
+    };
+    
+    for (const ws of workspaces) {
+      if (runningPodNames.has(ws.name)) {
+        // Pod exists - update status to active if not already
+        if (ws.status !== 'active') {
+          await dynamodbService.updateWorkspaceStatus(ws.workspaceId, 'active');
+          results.updated.push(ws.name);
+        }
+        results.kept.push(ws.name);
+      } else {
+        // Pod doesn't exist - delete from DynamoDB
+        await dynamodbService.deleteWorkspace(ws.workspaceId);
+        results.deleted.push(ws.name);
+      }
+    }
+    
+    res.json(results);
+  } catch (error) {
+    res.status(500).json({ error: error.message, stack: error.stack });
+  }
+});
+
+// Delete workspace by workspaceId from DynamoDB only
+router.delete('/debug/db/:workspaceId', async (req, res) => {
+  try {
+    await dynamodbService.deleteWorkspace(req.params.workspaceId);
+    res.json({ message: 'Deleted from DynamoDB' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 module.exports = router;

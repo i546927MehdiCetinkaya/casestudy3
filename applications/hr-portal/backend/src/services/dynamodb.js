@@ -229,6 +229,10 @@ async function updateWorkspace(workspaceId, updates) {
   }
 }
 
+async function updateWorkspaceStatus(workspaceId, status) {
+  return await updateWorkspace(workspaceId, { status });
+}
+
 module.exports = {
   createEmployee,
   getEmployee,
@@ -237,6 +241,7 @@ module.exports = {
   updateEmployee,
   createWorkspace,
   updateWorkspace,
+  updateWorkspaceStatus,
   getWorkspaceByEmployee,
   getAllWorkspaces,
   deleteWorkspace
