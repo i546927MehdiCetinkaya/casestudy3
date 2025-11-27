@@ -89,6 +89,8 @@ jobs:
       - name: Terraform Plan
         id: plan
         working-directory: ./terraform
+        env:
+          TF_VAR_directory_admin_password: ${{ secrets.DIRECTORY_ADMIN_PASSWORD }}
         run: |
           terraform plan -out=tfplan -detailed-exitcode || echo "exitcode=$?" >> $GITHUB_OUTPUT
           terraform show -no-color tfplan > plan.txt
@@ -160,6 +162,8 @@ jobs:
 
       - name: Terraform Apply
         working-directory: ./terraform
+        env:
+          TF_VAR_directory_admin_password: ${{ secrets.DIRECTORY_ADMIN_PASSWORD }}
         run: terraform apply -auto-approve tfplan
 
       - name: Get Terraform Outputs
