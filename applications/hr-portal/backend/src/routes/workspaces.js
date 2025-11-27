@@ -12,10 +12,15 @@ router.get('/debug/k8s', async (req, res) => {
     
     let config = 'none';
     let error = null;
+    let clusterInfo = null;
     
     try {
       kc.loadFromCluster();
       config = 'in-cluster';
+      clusterInfo = {
+        cluster: kc.getCurrentCluster(),
+        user: kc.getCurrentUser()
+      };
     } catch (e1) {
       try {
         kc.loadFromDefault();
@@ -28,18 +33,23 @@ router.get('/debug/k8s', async (req, res) => {
     if (config !== 'none') {
       const k8sApi = kc.makeApiClient(k8s.CoreV1Api);
       try {
-        const namespaces = await k8sApi.listNamespace();
+        // Try to list pods in workspaces namespace (our main target)
+        const pods = await k8sApi.listNamespacedPod('workspaces');
         res.json({
           status: 'connected',
           config,
-          namespaceCount: namespaces.body.items.length,
-          namespaces: namespaces.body.items.map(n => n.metadata.name)
+          clusterInfo,
+          podCount: pods.body.items.length,
+          pods: pods.body.items.map(p => p.metadata.name)
         });
       } catch (apiError) {
         res.json({
           status: 'config-loaded',
           config,
-          apiError: apiError.message
+          clusterInfo,
+          apiError: apiError.message,
+          apiErrorBody: apiError.body,
+          apiErrorStatusCode: apiError.statusCode
         });
       }
     } else {
