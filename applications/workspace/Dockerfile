@@ -54,9 +54,9 @@ WORKDIR /home/coder/workspace
 # Expose port
 EXPOSE 8080
 
-# Create entrypoint script that sets password and starts code-server
-# code-server reads PASSWORD from environment variable automatically
-ENV PASSWORD=""
+# Remove default config so code-server uses environment variables
+RUN rm -f /home/coder/.config/code-server/config.yaml
 
 # Start code-server - it will use $PASSWORD env var for authentication
+# When no config file exists, code-server reads PASSWORD from env
 CMD ["code-server", "--bind-addr", "0.0.0.0:8080", "--auth", "password", "/home/coder/workspace"]
