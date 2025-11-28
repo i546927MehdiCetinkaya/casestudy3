@@ -75,6 +75,45 @@ async function provisionWorkspace(employee) {
   logger.info(`Starting workspace provisioning for ${employee.employeeId}, name: ${workspaceName}`);
 
   try {
+    // 0. Get AD configuration from SSM
+    let adConfig = null;
+    try {
+      adConfig = await ssmService.getDirectoryConfig();
+      if (adConfig && adConfig.enabled) {
+        logger.info(`AD configuration found: domain=${adConfig.domain}, dns=${adConfig.dnsServers}`);
+        
+        // Create AD admin password secret if it doesn't exist
+        const adAdminPassword = await ssmService.getDirectoryAdminPassword();
+        if (adAdminPassword) {
+          const adSecretName = 'ad-admin-secret';
+          try {
+            await k8sApi.readNamespacedSecret(adSecretName, WORKSPACE_NAMESPACE);
+            logger.info('AD admin secret already exists');
+          } catch (e) {
+            if (e.statusCode === 404) {
+              // Create the secret
+              await k8sApi.createNamespacedSecret(WORKSPACE_NAMESPACE, {
+                apiVersion: 'v1',
+                kind: 'Secret',
+                metadata: { name: adSecretName, namespace: WORKSPACE_NAMESPACE },
+                type: 'Opaque',
+                stringData: { password: adAdminPassword }
+              });
+              logger.info('AD admin secret created');
+            }
+          }
+          adConfig.adminPasswordSecretName = adSecretName;
+        } else {
+          logger.warn('AD admin password not found in SSM, AD join will be skipped');
+          adConfig = null;
+        }
+      } else {
+        logger.info('AD not enabled, using local authentication only');
+      }
+    } catch (adError) {
+      logger.warn(`Failed to get AD config: ${adError.message}, continuing without AD`);
+    }
+
     // 1. Store temporary password in SSM Parameter Store (encrypted)
     try {
       await ssmService.storeTemporaryPassword(employee.employeeId, temporaryPassword);
@@ -92,10 +131,10 @@ async function provisionWorkspace(employee) {
       throw secretError;
     }
     
-    // 3. Create Pod for workspace (uses emptyDir, no PVC needed)
+    // 3. Create Pod for workspace (with AD config if available)
     try {
-      await createPod(workspaceName, employee, workspaceId);
-      logger.info(`Step 3: Pod created for ${workspaceName}`);
+      await createPod(workspaceName, employee, workspaceId, adConfig);
+      logger.info(`Step 3: Pod created for ${workspaceName}${adConfig?.enabled ? ' (with AD integration)' : ''}`);
     } catch (podError) {
       logger.error(`Step 3 failed (Pod): ${podError.message}`);
       throw podError;
@@ -123,6 +162,7 @@ async function provisionWorkspace(employee) {
       url: workspaceUrl,
       status: 'active',
       createdAt: new Date().toISOString(),
+      adEnabled: adConfig?.enabled || false,
       credentials: {
         username: 'coder',
         password: temporaryPassword
@@ -149,7 +189,8 @@ async function provisionWorkspace(employee) {
       await ssmService.storeAuditLog('workspace_provisioned', employee.employeeId, {
         workspaceId,
         workspaceName,
-        workspaceUrl
+        workspaceUrl,
+        adEnabled: adConfig?.enabled || false
       });
       logger.info(`Step 8: Audit log stored`);
     } catch (auditError) {
@@ -324,7 +365,57 @@ async function createSecret(name, password) {
   }
 }
 
-async function createPod(name, employee, workspaceId) {
+async function createPod(name, employee, workspaceId, adConfig = null) {
+  // Map employee role to ServiceAccount
+  const roleToServiceAccount = {
+    'infra': 'workspace-infra',
+    'developer': 'workspace-developer',
+    'hr': 'workspace-hr',
+    'manager': 'workspace-manager',
+    'admin': 'workspace-admin'
+  };
+  const serviceAccountName = roleToServiceAccount[employee.role?.toLowerCase()] || 'workspace-default';
+
+  // Base environment variables
+  const envVars = [
+    { name: 'EMPLOYEE_ID', value: employee.employeeId },
+    { name: 'EMPLOYEE_EMAIL', value: employee.email },
+    { name: 'EMPLOYEE_ROLE', value: employee.role },
+    { name: 'USER', value: 'employee' },
+    { 
+      name: 'PASSWORD', 
+      valueFrom: { 
+        secretKeyRef: { 
+          name: `${name}-secret`, 
+          key: 'password' 
+        } 
+      } 
+    }
+  ];
+
+  // Add AD configuration if available
+  if (adConfig && adConfig.enabled) {
+    envVars.push(
+      { name: 'AD_DOMAIN', value: adConfig.domain },
+      { name: 'AD_REALM', value: adConfig.domain.toUpperCase() },
+      { name: 'AD_ADMIN_USER', value: 'Admin' },
+      { name: 'DNS_SERVERS', value: adConfig.dnsServers || '' }
+    );
+    
+    // AD admin password is passed via secret reference
+    if (adConfig.adminPasswordSecretName) {
+      envVars.push({
+        name: 'AD_ADMIN_PASSWORD',
+        valueFrom: {
+          secretKeyRef: {
+            name: adConfig.adminPasswordSecretName,
+            key: 'password'
+          }
+        }
+      });
+    }
+  }
+
   const pod = {
     apiVersion: 'v1',
     kind: 'Pod',
@@ -340,8 +431,18 @@ async function createPod(name, employee, workspaceId) {
       }
     },
     spec: {
-      // Use default service account - no special permissions needed for workspaces
-      automountServiceAccountToken: false,
+      // Use department-specific ServiceAccount for IRSA
+      serviceAccountName: serviceAccountName,
+      automountServiceAccountToken: true, // Enable for IRSA
+      // Add DNS configuration for AD
+      dnsPolicy: adConfig?.enabled ? 'None' : 'ClusterFirst',
+      dnsConfig: adConfig?.enabled && adConfig.dnsServers ? {
+        nameservers: adConfig.dnsServers.split(' ').filter(ip => ip.trim()),
+        searches: [adConfig.domain, 'workspaces.svc.cluster.local', 'svc.cluster.local', 'cluster.local'],
+        options: [
+          { name: 'ndots', value: '5' }
+        ]
+      } : undefined,
       containers: [{
         name: 'linux-desktop',
         image: `${ECR_REGISTRY}/employee-workspace:latest`,
@@ -350,21 +451,7 @@ async function createPod(name, employee, workspaceId) {
           containerPort: 6080,
           name: 'novnc'
         }],
-        env: [
-          { name: 'EMPLOYEE_ID', value: employee.employeeId },
-          { name: 'EMPLOYEE_EMAIL', value: employee.email },
-          { name: 'EMPLOYEE_ROLE', value: employee.role },
-          { name: 'USER', value: 'employee' },
-          { 
-            name: 'PASSWORD', 
-            valueFrom: { 
-              secretKeyRef: { 
-                name: `${name}-secret`, 
-                key: 'password' 
-              } 
-            } 
-          }
-        ],
+        env: envVars,
         volumeMounts: [
           { name: 'workspace-storage', mountPath: '/home/employee/workspace' },
           { name: 'tmp', mountPath: '/tmp' }
@@ -388,6 +475,7 @@ async function createPod(name, employee, workspaceId) {
     }
   };
 
+  logger.info(`Creating pod ${name} with ServiceAccount ${serviceAccountName} (role: ${employee.role})`);
   await k8sApi.createNamespacedPod(WORKSPACE_NAMESPACE, pod);
 }
 

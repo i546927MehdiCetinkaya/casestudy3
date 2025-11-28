@@ -1,0 +1,26 @@
+[sssd]
+domains = ${AD_DOMAIN}
+config_file_version = 2
+services = nss, pam
+
+[domain/${AD_DOMAIN}]
+default_shell = /bin/bash
+krb5_store_password_if_offline = True
+cache_credentials = True
+krb5_realm = ${AD_REALM}
+realmd_tags = manages-system joined-with-adcli
+id_provider = ad
+fallback_homedir = /home/%u@%d
+ad_domain = ${AD_DOMAIN}
+use_fully_qualified_names = False
+ldap_id_mapping = True
+access_provider = ad
+
+# Allow all AD users to login
+ad_access_filter = (objectClass=user)
+
+# Performance optimizations for containers
+ldap_schema = ad
+ldap_idmap_range_min = 200000
+ldap_idmap_range_max = 2000200000
+ldap_idmap_range_size = 2000000000

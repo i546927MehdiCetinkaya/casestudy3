@@ -216,16 +216,19 @@ Each employee workspace is a Kubernetes pod running:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                    MISSING INTEGRATIONS                              │
+│                    MISSING INTEGRATIONS (NOW IMPLEMENTED IN CODE)    │
 ├─────────────────────────────────────────────────────────────────────┤
 │                                                                      │
-│  ❌ AD Authentication in Workspaces                                  │
-│     - Users login with generated passwords, NOT AD credentials      │
-│     - No PAM/SSSD/Winbind configuration in workspace image          │
+│  ⏳ AD Authentication in Workspaces                                  │
+│     - CODE READY: Dockerfile updated with sssd, realmd, adcli      │
+│     - CODE READY: join-ad.sh script for domain join                │
+│     - CODE READY: startup.sh with AD support                       │
+│     - NEEDS: Rebuild image & store AD password in SSM              │
 │                                                                      │
-│  ❌ IAM Role Assumption in Workspaces                                │
-│     - Pods don't have ServiceAccount with IRSA                      │
-│     - AWS CLI in workspace can't use department roles               │
+│  ⏳ IAM Role Assumption in Workspaces                                │
+│     - CODE READY: workspace-serviceaccounts.yaml with IRSA         │
+│     - CODE READY: workspace.js maps employee role → ServiceAccount │
+│     - NEEDS: Apply K8s manifests & provision new workspace         │
 │                                                                      │
 │  ❌ SAML Federation                                                  │
 │     - No Identity Provider configured                                │
@@ -367,26 +370,58 @@ Each employee workspace is a Kubernetes pod running:
 
 To fully implement AD + IAM roles:
 
-### 1. AD Authentication in Workspaces
+### 1. AD Authentication in Workspaces (CODE READY ✅)
+
+The workspace Dockerfile now includes SSSD/AD packages:
 ```dockerfile
-# Add to workspace Dockerfile:
-RUN apt-get install -y sssd sssd-ad realmd adcli
-# Configure SSSD to join innovatech.local
-# Users would then login with AD credentials
+# applications/workspace/Dockerfile
+RUN apt-get install -y \
+    sssd sssd-ad sssd-tools \
+    realmd adcli krb5-user \
+    samba-common-bin libnss-sss libpam-sss
 ```
 
-### 2. IAM Role Assumption
+The `join-ad.sh` script handles domain join at pod startup:
+```bash
+# Configures Kerberos, SSSD, and joins innovatech.local
+realm join --user=Admin innovatech.local
+```
+
+**To enable:**
+1. Store AD admin password in SSM: `aws ssm put-parameter --name "/innovatech-employee-lifecycle/directory/admin-password" --value "YOUR_PASSWORD" --type SecureString`
+2. Rebuild and push workspace image: `docker build -t employee-workspace . && docker push`
+3. Provision a new workspace - it will auto-join AD
+
+### 2. IAM Role Assumption via IRSA (CODE READY ✅)
+
+ServiceAccounts per department in `kubernetes/workspace-serviceaccounts.yaml`:
 ```yaml
-# Add ServiceAccount with IRSA:
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: developer-workspace
+  name: workspace-developer
+  namespace: workspaces
   annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::920120424621:role/developer-role
+    eks.amazonaws.com/role-arn: "arn:aws:iam::920120424621:role/innovatech-employee-lifecycle-developer-role"
 ```
 
-### 3. SAML Federation
+The `workspace.js` service automatically assigns ServiceAccount based on employee role:
+```javascript
+const roleToServiceAccount = {
+  'developer': 'workspace-developer',
+  'hr': 'workspace-hr',
+  'manager': 'workspace-manager',
+  'admin': 'workspace-admin',
+  'infra': 'workspace-infra'
+};
+```
+
+**To enable:**
+1. Apply ServiceAccounts: `kubectl apply -f kubernetes/workspace-serviceaccounts.yaml`
+2. Rebuild HR Portal backend image
+3. Provision new workspace - AWS CLI will automatically use department role
+
+### 3. SAML Federation (NOT IMPLEMENTED)
 - Configure AWS IAM Identity Provider
 - Map AD groups to IAM roles
 - Users assume roles via AD login
@@ -423,6 +458,17 @@ The infrastructure is **partially complete**:
 - ✅ Workspace provisioning works
 - ✅ Browser-based desktop access works
 - ✅ IAM roles and AD are deployed
-- ❌ AD and IAM roles are NOT integrated with workspaces
+- ⏳ AD and IAM role integration CODE READY (needs deployment)
+- ❌ AD and IAM roles require image rebuild and K8s manifest apply
 
-The system demonstrates cloud-native architecture but lacks enterprise identity integration.
+**New Files Added for AD/IRSA Integration:**
+| File | Purpose |
+|------|---------|
+| `applications/workspace/Dockerfile` | Updated with SSSD/AD packages |
+| `applications/workspace/join-ad.sh` | AD domain join script |
+| `applications/workspace/startup.sh` | Container startup with AD support |
+| `applications/workspace/sssd.conf.template` | SSSD configuration template |
+| `kubernetes/workspace-serviceaccounts.yaml` | Department-based ServiceAccounts with IRSA |
+| `scripts/setup-ad-ssm.ps1` | Script to store AD config in SSM |
+
+The system demonstrates cloud-native architecture with **code ready** for enterprise identity integration.

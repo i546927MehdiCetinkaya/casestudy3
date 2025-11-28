@@ -1,4 +1,5 @@
 # Employee Workspace - Linux Desktop with noVNC (XFCE in Browser)
+# Includes AD/SSSD integration for Active Directory authentication
 FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -8,8 +9,15 @@ ENV VNC_RESOLUTION=1920x1080
 ENV VNC_PORT=5901
 ENV NOVNC_PORT=6080
 
-# Install desktop environment and VNC
+# AD Domain settings (defaults, can be overridden)
+ENV AD_DOMAIN=innovatech.local
+ENV AD_REALM=INNOVATECH.LOCAL
+ENV AD_ADMIN_USER=Admin
+ENV AD_JOIN_OU=""
+
+# Install desktop environment, VNC, and AD/SSSD packages
 RUN apt-get update && apt-get install -y \
+    # Desktop environment
     xfce4 \
     xfce4-goodies \
     tightvncserver \
@@ -35,9 +43,27 @@ RUN apt-get update && apt-get install -y \
     xfonts-75dpi \
     fonts-liberation \
     fonts-dejavu \
+    # Active Directory / SSSD packages
+    sssd \
+    sssd-ad \
+    sssd-tools \
+    realmd \
+    adcli \
+    krb5-user \
+    samba-common-bin \
+    packagekit \
+    libnss-sss \
+    libpam-sss \
+    oddjob \
+    oddjob-mkhomedir \
     && rm -rf /var/lib/apt/lists/*
 
-# Create user
+# Pre-configure Kerberos (non-interactive)
+RUN echo "krb5-config krb5-config/default_realm string ${AD_REALM}" | debconf-set-selections && \
+    echo "krb5-config krb5-config/kerberos_servers string ${AD_DOMAIN}" | debconf-set-selections && \
+    echo "krb5-config krb5-config/admin_server string ${AD_DOMAIN}" | debconf-set-selections
+
+# Create fallback local user (used when AD is not available)
 RUN useradd -m -s /bin/bash ${USER} && \
     echo "${USER}:${PASSWORD}" | chpasswd && \
     usermod -aG sudo ${USER} && \
@@ -49,22 +75,16 @@ RUN mkdir -p /home/${USER}/.vnc && \
     chmod +x /home/${USER}/.vnc/xstartup && \
     chown -R ${USER}:${USER} /home/${USER}
 
-# Create startup script
-RUN echo '#!/bin/bash\n\
-# Set VNC password from environment\n\
-echo "${PASSWORD}" | vncpasswd -f > /home/${USER}/.vnc/passwd\n\
-chmod 600 /home/${USER}/.vnc/passwd\n\
-chown ${USER}:${USER} /home/${USER}/.vnc/passwd\n\
-\n\
-# Start VNC server\n\
-su - ${USER} -c "vncserver :1 -geometry ${VNC_RESOLUTION} -depth 24"\n\
-\n\
-# Start noVNC (web-based VNC client)\n\
-websockify --web=/usr/share/novnc/ ${NOVNC_PORT} localhost:${VNC_PORT} &\n\
-\n\
-# Keep container running\n\
-tail -f /dev/null\n\
-' > /startup.sh && chmod +x /startup.sh
+# Copy SSSD configuration template
+COPY sssd.conf.template /etc/sssd/sssd.conf.template
+
+# Copy AD join script
+COPY join-ad.sh /join-ad.sh
+RUN chmod +x /join-ad.sh
+
+# Create startup script with AD support
+COPY startup.sh /startup.sh
+RUN chmod +x /startup.sh
 
 # Create workspace directory
 RUN mkdir -p /home/${USER}/workspace && chown -R ${USER}:${USER} /home/${USER}/workspace

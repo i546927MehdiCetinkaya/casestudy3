@@ -60,7 +60,7 @@ HR Portal → Backend API → DynamoDB → Kubernetes → Ubuntu Desktop Pod →
 - Python 3 + pip
 - Node.js 18 + npm
 - Git
-- Build essentials (gcc, make)
+-essentials (g Build cc, make)
 - VS Code (code-server)
 - htop, vim, curl, wget
 
@@ -78,20 +78,24 @@ HR Portal → Backend API → DynamoDB → Kubernetes → Ubuntu Desktop Pod →
 | LoadBalancer URLs | ✅ | Public URLs per workspace |
 | Credentials Display | ✅ | Password shown in Workspaces tab |
 
-### ⚠️ Partially Implemented (Infrastructure exists, not integrated)
+### ⚠️ Partially Implemented (Code ready, needs deployment)
 | Feature | Status | Description |
 |---------|--------|-------------|
-| AWS Directory Service | ⚠️ | AD deployed (`innovatech.local`) but NOT integrated with workspaces |
-| IAM Roles per Department | ⚠️ | 5 roles exist but pods don't assume them |
+| AWS Directory Service | ⚠️ | AD deployed (`innovatech.local`) - CODE READY for integration |
+| IAM Roles per Department | ⚠️ | 5 roles exist - CODE READY for IRSA |
 | Email Notifications | ⚠️ | SES configured but emails not sent |
+
+### 🔧 Code Ready (Needs Build & Deploy)
+| Feature | Files Added | To Enable |
+|---------|-------------|-----------|
+| AD Authentication | `workspace/Dockerfile`, `join-ad.sh`, `startup.sh` | Rebuild image, store AD password in SSM |
+| IRSA per Department | `kubernetes/workspace-serviceaccounts.yaml` | Apply manifest, redeploy backend |
 
 ### ❌ Not Implemented
 | Feature | Status | Description |
 |---------|--------|-------------|
-| AD Authentication | ❌ | Workspaces use generated passwords, not AD credentials |
 | SAML Federation | ❌ | No SSO integration |
 | Persistent Storage | ❌ | Using emptyDir (data lost on pod restart) |
-| Role-based AWS Access | ❌ | Workspaces can't access AWS services per department |
 
 ---
 
@@ -160,6 +164,49 @@ http://ac0cd11d903e646dc890a3606c5999df-8a0c923d8bfa6cfe.elb.eu-west-1.amazonaws
 
 ---
 
+## Enabling AD + IAM Integration
+
+### Step 1: Store AD Admin Password in SSM
+```powershell
+# Option A: Run the setup script
+.\scripts\setup-ad-ssm.ps1
+
+# Option B: Manual command
+aws ssm put-parameter `
+    --name "/innovatech-employee-lifecycle/directory/admin-password" `
+    --value "YOUR_AD_ADMIN_PASSWORD" `
+    --type "SecureString" `
+    --region eu-west-1
+```
+
+### Step 2: Apply ServiceAccounts
+```bash
+kubectl apply -f kubernetes/workspace-serviceaccounts.yaml
+```
+
+### Step 3: Rebuild & Push Workspace Image
+```bash
+cd applications/workspace
+docker build -t 920120424621.dkr.ecr.eu-west-1.amazonaws.com/employee-workspace:latest .
+docker push 920120424621.dkr.ecr.eu-west-1.amazonaws.com/employee-workspace:latest
+```
+
+### Step 4: Rebuild & Push HR Portal Backend
+```bash
+cd applications/hr-portal/backend
+docker build -t 920120424621.dkr.ecr.eu-west-1.amazonaws.com/hr-portal-backend:latest .
+docker push 920120424621.dkr.ecr.eu-west-1.amazonaws.com/hr-portal-backend:latest
+kubectl rollout restart deployment hr-portal-backend -n hr-portal
+```
+
+### Step 5: Provision New Workspace
+- New workspaces will automatically:
+  - Join the AD domain `innovatech.local`
+  - Use department-specific ServiceAccount
+  - Have AWS CLI configured with IAM role via IRSA
+
+---
+
 ## Project Structure
 
 ```
@@ -172,14 +219,20 @@ casestudy3/
 │   │   │       └── services/ # DynamoDB, K8s, SSM
 │   │   └── frontend/         # React SPA
 │   └── workspace/
-│       └── Dockerfile        # Ubuntu + XFCE + noVNC image
+│       ├── Dockerfile        # Ubuntu + XFCE + noVNC + SSSD
+│       ├── join-ad.sh        # AD domain join script
+│       ├── startup.sh        # Container entrypoint
+│       └── sssd.conf.template # SSSD config template
 ├── terraform/
 │   ├── main.tf              # Root module
 │   └── modules/             # VPC, EKS, DynamoDB, IAM, etc.
 ├── kubernetes/
 │   ├── hr-portal.yaml       # HR Portal deployment
 │   ├── rbac.yaml            # Kubernetes RBAC
+│   ├── workspace-serviceaccounts.yaml  # IRSA per department
 │   └── namespaces.yaml      # Namespace definitions
+├── scripts/
+│   └── setup-ad-ssm.ps1     # AD SSM configuration script
 ├── .github/
 │   └── workflows/
 │       └── deploy.yml       # CI/CD pipeline
@@ -215,11 +268,12 @@ casestudy3/
 
 ## Future Improvements
 
-1. **AD Integration**: Configure workspaces to authenticate via AWS Directory Service
-2. **IAM Role Assumption**: Allow workspaces to use department-specific IAM roles
+1. ~~**AD Integration**: Configure workspaces to authenticate via AWS Directory Service~~ ✅ CODE READY
+2. ~~**IAM Role Assumption**: Allow workspaces to use department-specific IAM roles~~ ✅ CODE READY
 3. **Persistent Storage**: Fix EBS CSI driver for persistent workspace data
 4. **SSO**: Implement SAML federation for single sign-on
 5. **SSH Access**: Add SSH server to workspaces as alternative to VNC
+6. **HTTPS**: Add TLS termination on LoadBalancers
 
 ---
 

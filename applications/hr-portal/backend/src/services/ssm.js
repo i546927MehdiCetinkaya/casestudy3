@@ -234,12 +234,25 @@ async function getDirectoryConfig() {
     } catch (e) {
       // Access URL is optional
     }
+
+    // Get DNS servers (required for AD join)
+    let dnsServers = null;
+    try {
+      const dnsParam = await ssmClient.send(new GetParameterCommand({
+        Name: `/${CLUSTER_NAME}/directory/dns-servers`
+      }));
+      dnsServers = dnsParam.Parameter.Value;
+    } catch (e) {
+      // DNS servers might not be stored yet
+      logger.warn('Directory DNS servers not found in SSM');
+    }
     
     return {
       enabled: true,
       directoryId: directoryIdParam.Parameter.Value,
       domain: directoryDomainParam.Parameter.Value,
-      accessUrl
+      accessUrl,
+      dnsServers
     };
   } catch (error) {
     if (error.name === 'ParameterNotFound') {
@@ -247,6 +260,83 @@ async function getDirectoryConfig() {
     }
     logger.error('Failed to retrieve directory configuration from SSM:', error);
     return { enabled: false };
+  }
+}
+
+/**
+ * Get Directory Service admin password from SSM (SecureString)
+ */
+async function getDirectoryAdminPassword() {
+  const parameterName = `/${CLUSTER_NAME}/directory/admin-password`;
+  
+  try {
+    const command = new GetParameterCommand({
+      Name: parameterName,
+      WithDecryption: true
+    });
+    
+    const response = await ssmClient.send(command);
+    return response.Parameter.Value;
+  } catch (error) {
+    if (error.name === 'ParameterNotFound') {
+      logger.warn('Directory admin password not found in SSM');
+      return null;
+    }
+    logger.error('Failed to retrieve directory admin password from SSM:', error);
+    return null;
+  }
+}
+
+/**
+ * Store Directory Service configuration in SSM (for initial setup)
+ */
+async function storeDirectoryConfig(config) {
+  try {
+    // Store directory ID
+    await ssmClient.send(new PutParameterCommand({
+      Name: `/${CLUSTER_NAME}/directory/id`,
+      Value: config.directoryId,
+      Type: 'String',
+      Description: 'AWS Directory Service ID',
+      Overwrite: true
+    }));
+
+    // Store domain
+    await ssmClient.send(new PutParameterCommand({
+      Name: `/${CLUSTER_NAME}/directory/domain`,
+      Value: config.domain,
+      Type: 'String',
+      Description: 'Directory Service domain name',
+      Overwrite: true
+    }));
+
+    // Store DNS servers
+    if (config.dnsServers) {
+      await ssmClient.send(new PutParameterCommand({
+        Name: `/${CLUSTER_NAME}/directory/dns-servers`,
+        Value: config.dnsServers,
+        Type: 'String',
+        Description: 'Directory Service DNS server IPs',
+        Overwrite: true
+      }));
+    }
+
+    // Store admin password (SecureString)
+    if (config.adminPassword) {
+      await ssmClient.send(new PutParameterCommand({
+        Name: `/${CLUSTER_NAME}/directory/admin-password`,
+        Value: config.adminPassword,
+        Type: 'SecureString',
+        Description: 'Directory Service admin password',
+        Overwrite: true
+      }));
+    }
+
+    logger.info('Directory configuration stored in SSM');
+    return { success: true };
+  } catch (error) {
+    logger.error('Failed to store directory configuration:', error);
+    throw error;
   }
 }
 
@@ -443,6 +533,8 @@ module.exports = {
   getWorkspaceMetadata,
   getEmailConfig,
   getDirectoryConfig,
+  getDirectoryAdminPassword,
+  storeDirectoryConfig,
   storeDirectoryUserMapping,
   getDirectoryUserMapping,
   deleteDirectoryUserMapping,
