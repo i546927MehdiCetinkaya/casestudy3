@@ -57,6 +57,7 @@ jobs:
           kubeconform -summary -output pretty kubernetes/network-policies.yaml
           kubeconform -summary -output pretty kubernetes/hr-portal.yaml
           kubeconform -summary -output pretty kubernetes/workspaces.yaml
+          kubeconform -summary -output pretty kubernetes/workspace-serviceaccounts.yaml
 
   plan:
     name: Terraform Plan
@@ -230,6 +231,9 @@ jobs:
 
       - name: Deploy Network Policies
         run: kubectl apply -f kubernetes/network-policies.yaml
+
+      - name: Deploy Workspace ServiceAccounts
+        run: kubectl apply -f kubernetes/workspace-serviceaccounts.yaml
 
       - name: Deploy HR Portal
         run: kubectl apply -f kubernetes/hr-portal.yaml
