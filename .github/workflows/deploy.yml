@@ -156,12 +156,6 @@ jobs:
         working-directory: ./terraform
         run: terraform init
 
-      - name: Download Plan
-        uses: actions/download-artifact@v4
-        with:
-          name: terraform-plan
-          path: terraform/
-
       - name: Import existing resources (if needed)
         working-directory: ./terraform
         continue-on-error: true
@@ -175,7 +169,7 @@ jobs:
         working-directory: ./terraform
         env:
           TF_VAR_directory_admin_password: ${{ secrets.DIRECTORY_ADMIN_PASSWORD }}
-        run: terraform apply -auto-approve tfplan
+        run: terraform apply -auto-approve
 
       - name: Get Terraform Outputs
         id: output
