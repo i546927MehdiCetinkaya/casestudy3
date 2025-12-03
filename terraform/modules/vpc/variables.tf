@@ -17,3 +17,15 @@ variable "environment" {
   description = "Environment name"
   type        = string
 }
+
+variable "use_nat_instance" {
+  description = "Use NAT Instance instead of NAT Gateway for better security control and cost efficiency"
+  type        = bool
+  default     = true
+}
+
+variable "nat_instance_type" {
+  description = "Instance type for NAT Instance"
+  type        = string
+  default     = "t3.micro"
+}

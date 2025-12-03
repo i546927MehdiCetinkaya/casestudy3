@@ -24,6 +24,21 @@ output "private_route_table_ids" {
 }
 
 output "nat_gateway_ids" {
-  description = "IDs of NAT gateways"
+  description = "IDs of NAT gateways (empty if using NAT Instance)"
   value       = aws_nat_gateway.main[*].id
+}
+
+output "nat_instance_id" {
+  description = "ID of NAT Instance (null if using NAT Gateway)"
+  value       = var.use_nat_instance ? aws_instance.nat[0].id : null
+}
+
+output "nat_instance_private_ip" {
+  description = "Private IP of NAT Instance"
+  value       = var.use_nat_instance ? aws_instance.nat[0].private_ip : null
+}
+
+output "nat_instance_security_group_id" {
+  description = "Security group ID of NAT Instance"
+  value       = aws_security_group.nat_instance.id
 }

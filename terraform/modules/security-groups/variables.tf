@@ -12,3 +12,15 @@ variable "environment" {
   description = "Environment name"
   type        = string
 }
+
+variable "vpc_cidr_blocks" {
+  description = "VPC CIDR blocks for internal access"
+  type        = list(string)
+  default     = ["10.0.0.0/16"]
+}
+
+variable "corporate_cidr_blocks" {
+  description = "Corporate network CIDR blocks (VPN/DirectConnect) that can access HR Portal"
+  type        = list(string)
+  default     = []
+}

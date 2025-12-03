@@ -48,6 +48,12 @@ variable "admin_cidr_blocks" {
   default     = []
 }
 
+variable "domain_name" {
+  description = "Internal domain name for the private hosted zone"
+  type        = string
+  default     = "internal.innovatech.local"
+}
+
 variable "node_instance_types" {
   description = "EC2 instance types for EKS nodes"
   type        = list(string)
@@ -102,4 +108,62 @@ variable "tags" {
   description = "Additional tags for all resources"
   type        = map(string)
   default     = {}
+}
+
+# =============================================================================
+# ZERO TRUST CONFIGURATION
+# =============================================================================
+
+# HR Portal Access Control
+variable "corporate_cidr_blocks" {
+  description = "Corporate network CIDR blocks (VPN/DirectConnect) that can access HR Portal"
+  type        = list(string)
+  default     = []
+}
+
+# NAT Instance Configuration (instead of NAT Gateway)
+variable "use_nat_instance" {
+  description = "Use NAT Instance instead of NAT Gateway for better security control and cost efficiency"
+  type        = bool
+  default     = true
+}
+
+variable "nat_instance_type" {
+  description = "Instance type for NAT Instance"
+  type        = string
+  default     = "t3.micro"
+}
+
+# =============================================================================
+# COGNITO CONFIGURATION
+# =============================================================================
+
+variable "domain_name" {
+  description = "Domain name for the application"
+  type        = string
+  default     = "innovatech.local"
+}
+
+variable "hr_portal_callback_urls" {
+  description = "Callback URLs for HR Portal Cognito client"
+  type        = list(string)
+  default     = ["https://hr-portal.internal.innovatech.local/callback"]
+}
+
+variable "hr_portal_logout_urls" {
+  description = "Logout URLs for HR Portal Cognito client"
+  type        = list(string)
+  default     = ["https://hr-portal.internal.innovatech.local/logout"]
+}
+
+variable "workspace_callback_urls" {
+  description = "Callback URLs for Workspace Cognito client"
+  type        = list(string)
+  default     = ["https://workspace.internal.innovatech.local/callback"]
+}
+
+variable "workspace_logout_urls" {
+  description = "Logout URLs for Workspace Cognito client"
+  type        = list(string)
+  default     = ["https://workspace.internal.innovatech.local/logout"]
 }

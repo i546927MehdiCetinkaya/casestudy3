@@ -224,6 +224,17 @@ jobs:
           kubectl cluster-info
           kubectl get nodes
 
+      - name: Download Terraform Outputs
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-outputs
+          path: terraform/
+
+      - name: Update Kubernetes Manifests
+        shell: pwsh
+        run: |
+          ./scripts/update-k8s-manifests.ps1 -OutputsFile "terraform/outputs.json"
+
       - name: Deploy Namespaces
         run: kubectl apply -f kubernetes/namespaces.yaml
 
@@ -365,8 +376,9 @@ jobs:
           ALB_URL=$(kubectl get ingress -n hr-portal -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}')
           
           if [ ! -z "$ALB_URL" ]; then
-            echo "ALB URL: $ALB_URL"
-            echo "Note: DNS propagation may take a few minutes"
+            echo "Internal ALB URL: $ALB_URL"
+            echo "Note: This is an internal load balancer. It is not accessible from the public internet."
+            echo "Access requires VPN connection and Cognito authentication."
           fi
 
   notify:

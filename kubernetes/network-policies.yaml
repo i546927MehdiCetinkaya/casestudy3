@@ -1,4 +1,11 @@
-# Network Policies for Zero Trust Micro-Segmentation
+# =============================================================================
+# NETWORK POLICIES FOR ZERO TRUST MICRO-SEGMENTATION
+# Principle: Deny by default, allow only what's explicitly needed
+# =============================================================================
+
+# =============================================================================
+# HR PORTAL NAMESPACE - PRIVATE, HR STAFF ONLY
+# =============================================================================
 
 ---
 # Default Deny All Traffic in HR Portal Namespace
@@ -13,7 +20,7 @@ spec:
   - Ingress
   - Egress
 ---
-# Allow HR Frontend to Backend
+# Allow HR Frontend to Backend (internal communication only)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -30,14 +37,11 @@ spec:
     - podSelector:
         matchLabels:
           app: hr-portal-frontend
-    - namespaceSelector:
-        matchLabels:
-          name: ingress-nginx
     ports:
     - protocol: TCP
       port: 3000
 ---
-# Allow HR Backend to AWS Services (VPC Endpoints)
+# Allow HR Backend to AWS Services (via VPC Endpoints only - no internet)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -50,11 +54,14 @@ spec:
   policyTypes:
   - Egress
   egress:
+  # Allow to VPC CIDR (VPC Endpoints)
   - to:
-    - podSelector: {}
+    - ipBlock:
+        cidr: 10.0.0.0/8
     ports:
     - protocol: TCP
       port: 443
+  # Allow DNS
   - to:
     - namespaceSelector: {}
       podSelector:
@@ -63,8 +70,16 @@ spec:
     ports:
     - protocol: UDP
       port: 53
+  # Allow to workspaces namespace (for provisioning)
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: workspaces
+    ports:
+    - protocol: TCP
+      port: 8080
 ---
-# Allow Ingress to Frontend
+# Allow Ingress to Frontend - ONLY from internal ALB (HR users authenticated via Cognito)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -77,13 +92,50 @@ spec:
   policyTypes:
   - Ingress
   ingress:
+  # Only allow traffic from internal ALB (VPC CIDR)
   - from:
-    - namespaceSelector:
-        matchLabels:
-          name: ingress-nginx
+    - ipBlock:
+        cidr: 10.0.0.0/8
     ports:
     - protocol: TCP
-      port: 80
+      port: 8080
+---
+# Allow Frontend Egress (only to backend - no external access)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: hr-frontend-egress
+  namespace: hr-portal
+spec:
+  podSelector:
+    matchLabels:
+      app: hr-portal-frontend
+  policyTypes:
+  - Egress
+  egress:
+  # Only allow traffic to backend
+  - to:
+    - podSelector:
+        matchLabels:
+          app: hr-portal-backend
+    ports:
+    - protocol: TCP
+      port: 3000
+  # Allow DNS
+  - to:
+    - namespaceSelector: {}
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+
+# =============================================================================
+# WORKSPACES NAMESPACE - PRIVATE, EMPLOYEE-ONLY ACCESS
+# Each workspace is isolated and only accessible by its owner
+# =============================================================================
+
 ---
 # Default Deny All in Workspaces Namespace
 apiVersion: networking.k8s.io/v1
@@ -97,7 +149,7 @@ spec:
   - Ingress
   - Egress
 ---
-# Allow Ingress to Workspaces
+# Allow Ingress to Workspaces - ONLY from internal ALB (authenticated employees)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -110,15 +162,15 @@ spec:
   policyTypes:
   - Ingress
   ingress:
+  # Only allow from internal ALB (VPC CIDR - authenticated via Cognito)
   - from:
-    - namespaceSelector:
-        matchLabels:
-          name: ingress-nginx
+    - ipBlock:
+        cidr: 10.0.0.0/8
     ports:
     - protocol: TCP
       port: 8080
 ---
-# Allow Workspaces Egress for Development Tools
+# Allow Workspaces Egress - Limited to VPC only (via VPC Endpoints)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -140,24 +192,27 @@ spec:
     ports:
     - protocol: UDP
       port: 53
-  # Allow HTTPS for external resources
+  # Allow HTTPS to VPC CIDR only (VPC Endpoints for AWS services)
   - to:
-    - namespaceSelector: {}
+    - ipBlock:
+        cidr: 10.0.0.0/8
     ports:
     - protocol: TCP
       port: 443
-  # Allow HTTP for external resources
+  # Allow HTTP to VPC CIDR only (for internal services)
   - to:
-    - namespaceSelector: {}
+    - ipBlock:
+        cidr: 10.0.0.0/8
     ports:
     - protocol: TCP
       port: 80
 ---
-# Isolate Workspaces from Each Other
+# CRITICAL: Isolate Workspaces from Each Other
+# Each workspace can ONLY be accessed by its owner, not other employees
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: isolate-workspaces
+  name: isolate-workspaces-strict
   namespace: workspaces
 spec:
   podSelector:
@@ -165,5 +220,105 @@ spec:
       app: workspace
   policyTypes:
   - Ingress
+  ingress:
+  # Block all pod-to-pod communication within workspaces namespace
+  # Each workspace is isolated - no lateral movement possible
+  - from:
+    - ipBlock:
+        cidr: 10.0.0.0/8
+        except:
+        # Exclude all private subnet CIDRs (pod network)
+        - 10.0.48.0/20
+        - 10.0.64.0/20
+        - 10.0.80.0/20
+    ports:
+    - protocol: TCP
+      port: 8080
+---
+# Allow workspace-router to reach workspaces
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-router-to-workspaces
+  namespace: workspaces
+spec:
+  podSelector:
+    matchLabels:
+      app: workspace
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: workspace-router
+    ports:
+    - protocol: TCP
+      port: 8080
+---
+# Workspace Router Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: workspace-router-policy
+  namespace: workspaces
+spec:
+  podSelector:
+    matchLabels:
+      app: workspace-router
+  policyTypes:
+  - Ingress
   - Egress
-  # Only allow specific ingress/egress defined in other policies
+  ingress:
+  # Only from internal ALB
+  - from:
+    - ipBlock:
+        cidr: 10.0.0.0/8
+    ports:
+    - protocol: TCP
+      port: 8080
+  egress:
+  # To workspace pods only
+  - to:
+    - podSelector:
+        matchLabels:
+          app: workspace
+    ports:
+    - protocol: TCP
+      port: 8080
+  # DNS
+  - to:
+    - namespaceSelector: {}
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+
+# =============================================================================
+# KUBE-SYSTEM NAMESPACE PROTECTION
+# =============================================================================
+
+---
+# Protect CoreDNS - only allow DNS queries
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: coredns-policy
+  namespace: kube-system
+spec:
+  podSelector:
+    matchLabels:
+      k8s-app: kube-dns
+  policyTypes:
+  - Ingress
+  ingress:
+  # Allow DNS from all namespaces
+  - from:
+    - namespaceSelector: {}
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53

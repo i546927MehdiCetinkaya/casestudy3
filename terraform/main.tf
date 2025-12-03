@@ -1,6 +1,10 @@
 # Main Terraform Configuration for Employee Lifecycle Automation on AWS EKS
 # Case Study 3 - Innovatech Solutions
-# Zero Trust Architecture with Virtual Workspaces
+# ZERO TRUST ARCHITECTURE with Virtual Workspaces
+# - All services are private (internal ALBs only)
+# - Authentication via AWS Cognito
+# - NAT Instance instead of NAT Gateway
+# - VPC Endpoints for AWS service access (no public internet)
 
 terraform {
   required_version = ">= 1.0"
@@ -24,11 +28,12 @@ provider "aws" {
 
   default_tags {
     tags = {
-      Project     = "InnovatechEmployeeLifecycle"
-      Environment = var.environment
-      ManagedBy   = "Terraform"
-      CostCenter  = "IT-Infrastructure"
-      Owner       = "DevOps-Team"
+      Project      = "InnovatechEmployeeLifecycle"
+      Environment  = var.environment
+      ManagedBy    = "Terraform"
+      CostCenter   = "IT-Infrastructure"
+      Owner        = "DevOps-Team"
+      Architecture = "ZeroTrust"
     }
   }
 }
@@ -55,7 +60,9 @@ provider "kubernetes" {
   token                  = data.aws_eks_cluster_auth.cluster.token
 }
 
-# VPC Module
+# =============================================================================
+# VPC MODULE - With NAT Instance (Zero Trust)
+# =============================================================================
 module "vpc" {
   source = "./modules/vpc"
 
@@ -63,9 +70,13 @@ module "vpc" {
   vpc_cidr           = var.vpc_cidr
   availability_zones = slice(data.aws_availability_zones.available.names, 0, 3)
   environment        = var.environment
+  use_nat_instance   = var.use_nat_instance
+  nat_instance_type  = var.nat_instance_type
 }
 
-# EKS Module
+# =============================================================================
+# EKS MODULE
+# =============================================================================
 module "eks" {
   source = "./modules/eks"
 
@@ -78,7 +89,9 @@ module "eks" {
   depends_on = [module.vpc]
 }
 
-# DynamoDB Module
+# =============================================================================
+# DYNAMODB MODULE
+# =============================================================================
 module "dynamodb" {
   source = "./modules/dynamodb"
 
@@ -86,7 +99,9 @@ module "dynamodb" {
   environment = var.environment
 }
 
-# VPC Endpoints Module
+# =============================================================================
+# VPC ENDPOINTS MODULE - For private AWS service access (Zero Trust)
+# =============================================================================
 module "vpc_endpoints" {
   source = "./modules/vpc-endpoints"
 
@@ -98,7 +113,24 @@ module "vpc_endpoints" {
   depends_on = [module.vpc]
 }
 
-# Systems Manager Module (SSM Parameter Store, Session Manager)
+# =============================================================================
+# COGNITO MODULE - For Zero Trust Authentication
+# =============================================================================
+module "cognito" {
+  source = "./modules/cognito"
+
+  cluster_name            = var.cluster_name
+  environment             = var.environment
+  domain_name             = var.domain_name
+  hr_portal_callback_urls = var.hr_portal_callback_urls
+  hr_portal_logout_urls   = var.hr_portal_logout_urls
+  workspace_callback_urls = var.workspace_callback_urls
+  workspace_logout_urls   = var.workspace_logout_urls
+}
+
+# =============================================================================
+# SYSTEMS MANAGER MODULE (SSM Parameter Store, Session Manager)
+# =============================================================================
 module "systems_manager" {
   source = "./modules/systems-manager"
 
@@ -118,7 +150,9 @@ module "systems_manager" {
   depends_on = [module.vpc]
 }
 
-# IAM Module
+# =============================================================================
+# IAM MODULE
+# =============================================================================
 module "iam" {
   source = "./modules/iam"
 
@@ -135,7 +169,9 @@ module "iam" {
   depends_on = [module.eks, module.dynamodb, module.systems_manager]
 }
 
-# Directory Service Module (AWS Managed Microsoft AD)
+# =============================================================================
+# DIRECTORY SERVICE MODULE (AWS Managed Microsoft AD)
+# =============================================================================
 module "directory_service" {
   source = "./modules/directory-service"
   count  = var.enable_directory_service ? 1 : 0
@@ -150,7 +186,9 @@ module "directory_service" {
   depends_on = [module.vpc]
 }
 
-# EBS CSI Driver Module
+# =============================================================================
+# EBS CSI DRIVER MODULE
+# =============================================================================
 module "ebs_csi" {
   source = "./modules/ebs-csi"
 
@@ -161,18 +199,24 @@ module "ebs_csi" {
   depends_on = [module.eks]
 }
 
-# Security Groups Module
+# =============================================================================
+# SECURITY GROUPS MODULE - Zero Trust
+# =============================================================================
 module "security_groups" {
   source = "./modules/security-groups"
 
-  vpc_id       = module.vpc.vpc_id
-  cluster_name = var.cluster_name
-  environment  = var.environment
+  vpc_id                = module.vpc.vpc_id
+  cluster_name          = var.cluster_name
+  environment           = var.environment
+  vpc_cidr_blocks       = [var.vpc_cidr]
+  corporate_cidr_blocks = var.corporate_cidr_blocks
 
   depends_on = [module.vpc]
 }
 
-# ECR Module
+# =============================================================================
+# ECR MODULE
+# =============================================================================
 module "ecr" {
   source = "./modules/ecr"
 
@@ -184,7 +228,9 @@ module "ecr" {
   environment = var.environment
 }
 
-# CloudWatch Module
+# =============================================================================
+# CLOUDWATCH MONITORING MODULE
+# =============================================================================
 module "monitoring" {
   source = "./modules/monitoring"
 
@@ -192,4 +238,16 @@ module "monitoring" {
   environment  = var.environment
 
   depends_on = [module.eks]
+}
+
+# =============================================================================
+# ROUTE53 MODULE - Internal DNS
+# =============================================================================
+module "route53" {
+  source = "./modules/route53"
+
+  vpc_id       = module.vpc.vpc_id
+  domain_name  = var.domain_name
+  cluster_name = var.cluster_name
+  environment  = var.environment
 }

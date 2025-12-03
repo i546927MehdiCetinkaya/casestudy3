@@ -174,15 +174,12 @@ spec:
       - name: nginx-run
         emptyDir: {}
 ---
-# Service for HR Portal Frontend (LoadBalancer for external access)
+# Service for HR Portal Frontend (Internal only - ClusterIP)
 apiVersion: v1
 kind: Service
 metadata:
   name: hr-portal-frontend
   namespace: hr-portal
-  annotations:
-    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
-    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
 spec:
   selector:
     app: hr-portal-frontend
@@ -190,25 +187,38 @@ spec:
   - protocol: TCP
     port: 80
     targetPort: 8080
-  type: LoadBalancer
+  type: ClusterIP
 ---
-# Ingress for HR Portal (requires AWS Load Balancer Controller)
+# Internal Ingress for HR Portal (Only accessible within corporate network)
+# Requires AWS Load Balancer Controller and corporate VPN/DirectConnect
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: hr-portal
   namespace: hr-portal
   annotations:
-    alb.ingress.kubernetes.io/scheme: internet-facing
+    # INTERNAL load balancer - only accessible within VPC
+    alb.ingress.kubernetes.io/scheme: internal
     alb.ingress.kubernetes.io/target-type: ip
-    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
-    # Note: For HTTPS, create ACM certificate and add:
-    # alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:eu-west-1:920120424621:certificate/YOUR-CERT-ID"
-    # alb.ingress.kubernetes.io/ssl-redirect: '443'
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+    # SSL/TLS Configuration (required for production)
+    alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:eu-west-1:920120424621:certificate/YOUR-CERT-ID"
+    alb.ingress.kubernetes.io/ssl-policy: "ELBSecurityPolicy-TLS13-1-2-2021-06"
+    # Security Group - restrict to corporate IP ranges only
+    alb.ingress.kubernetes.io/security-groups: "hr-portal-internal-alb-sg"
+    alb.ingress.kubernetes.io/inbound-cidrs: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+    # Authentication via AWS Cognito (HR users only)
+    alb.ingress.kubernetes.io/auth-type: cognito
+    alb.ingress.kubernetes.io/auth-idp-cognito: '{"userPoolArn":"arn:aws:cognito-idp:eu-west-1:920120424621:userpool/YOUR-USER-POOL-ID","userPoolClientId":"YOUR-CLIENT-ID","userPoolDomain":"YOUR-DOMAIN"}'
+    alb.ingress.kubernetes.io/auth-scope: "openid email profile"
+    alb.ingress.kubernetes.io/auth-session-cookie: "AWSELBAuthSessionCookie"
+    alb.ingress.kubernetes.io/auth-session-timeout: "3600"
+    alb.ingress.kubernetes.io/auth-on-unauthenticated-request: authenticate
 spec:
   ingressClassName: alb
   rules:
-  - http:
+  - host: hr-portal.internal.innovatech.local
+    http:
       paths:
       - path: /api
         pathType: Prefix

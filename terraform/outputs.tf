@@ -51,12 +51,32 @@ output "dynamodb_table_name" {
   value       = module.dynamodb.table_name
 }
 
+output "route53_zone_id" {
+  description = "ID of the private Route53 hosted zone"
+  value       = module.route53.zone_id
+}
+
+output "route53_zone_arn" {
+  description = "ARN of the private Route53 hosted zone"
+  value       = module.route53.zone_arn
+}
+
 output "dynamodb_table_arn" {
   description = "ARN of the DynamoDB table"
   value       = module.dynamodb.table_arn
 }
 
-output "ecr_repositories" {
+output "hr_portal_internal_alb_sg_id" {
+  description = "ID of HR Portal Internal ALB security group"
+  value       = module.security_groups.hr_portal_internal_alb_sg_id
+}
+
+output "workspace_internal_alb_sg_id" {
+  description = "ID of Workspace Internal ALB security group"
+  value       = module.security_groups.workspace_internal_alb_sg_id
+}
+
+output "ecr_repository_urls" {
   description = "Map of ECR repository names to URLs"
   value       = module.ecr.repository_urls
 }
@@ -141,4 +161,75 @@ output "cloudwatch_log_group_name" {
 output "configure_kubectl" {
   description = "Command to configure kubectl"
   value       = "aws eks update-kubeconfig --region ${var.aws_region} --name ${module.eks.cluster_name}"
+}
+
+# =============================================================================
+# ZERO TRUST OUTPUTS
+# =============================================================================
+
+# NAT Instance
+output "nat_instance_id" {
+  description = "ID of NAT Instance (null if using NAT Gateway)"
+  value       = module.vpc.nat_instance_id
+}
+
+output "nat_instance_private_ip" {
+  description = "Private IP of NAT Instance"
+  value       = module.vpc.nat_instance_private_ip
+}
+
+# Cognito Outputs
+output "cognito_user_pool_id" {
+  description = "ID of Cognito User Pool"
+  value       = module.cognito.user_pool_id
+}
+
+output "cognito_user_pool_arn" {
+  description = "ARN of Cognito User Pool"
+  value       = module.cognito.user_pool_arn
+}
+
+output "cognito_user_pool_domain" {
+  description = "Domain of Cognito User Pool"
+  value       = module.cognito.user_pool_domain
+}
+
+output "cognito_hr_portal_client_id" {
+  description = "Client ID for HR Portal"
+  value       = module.cognito.hr_portal_client_id
+}
+
+output "cognito_workspace_client_id" {
+  description = "Client ID for Workspace"
+  value       = module.cognito.workspace_client_id
+}
+
+output "cognito_alb_auth_annotation" {
+  description = "ALB Ingress annotation for Cognito authentication (use in Kubernetes)"
+  value       = module.cognito.alb_auth_cognito_annotation
+  sensitive   = true
+}
+
+# Security Groups
+output "hr_portal_internal_alb_sg_id" {
+  description = "Security Group ID for HR Portal Internal ALB"
+  value       = module.security_groups.hr_portal_internal_alb_sg_id
+}
+
+output "workspace_internal_alb_sg_id" {
+  description = "Security Group ID for Workspace Internal ALB"
+  value       = module.security_groups.workspace_internal_alb_sg_id
+}
+
+# Zero Trust Summary
+output "zero_trust_summary" {
+  description = "Summary of Zero Trust configuration"
+  value = {
+    nat_type                = var.use_nat_instance ? "NAT Instance" : "NAT Gateway"
+    hr_portal_access        = "Internal ALB only (VPC + Corporate CIDR)"
+    workspace_access        = "Internal ALB only (VPC + Corporate CIDR)"
+    authentication          = "AWS Cognito with MFA"
+    network_isolation       = "VPC Endpoints for AWS services"
+    workspace_isolation     = "Per-employee network policies"
+  }
 }
