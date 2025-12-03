@@ -138,12 +138,6 @@ variable "nat_instance_type" {
 # COGNITO CONFIGURATION
 # =============================================================================
 
-variable "domain_name" {
-  description = "Domain name for the application"
-  type        = string
-  default     = "innovatech.local"
-}
-
 variable "hr_portal_callback_urls" {
   description = "Callback URLs for HR Portal Cognito client"
   type        = list(string)

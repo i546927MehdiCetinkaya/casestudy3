@@ -211,15 +211,7 @@ output "cognito_alb_auth_annotation" {
 }
 
 # Security Groups
-output "hr_portal_internal_alb_sg_id" {
-  description = "Security Group ID for HR Portal Internal ALB"
-  value       = module.security_groups.hr_portal_internal_alb_sg_id
-}
-
-output "workspace_internal_alb_sg_id" {
-  description = "Security Group ID for Workspace Internal ALB"
-  value       = module.security_groups.workspace_internal_alb_sg_id
-}
+# (Already defined above)
 
 # Zero Trust Summary
 output "zero_trust_summary" {
