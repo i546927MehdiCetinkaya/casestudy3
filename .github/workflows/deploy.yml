@@ -162,6 +162,15 @@ jobs:
           name: terraform-plan
           path: terraform/
 
+      - name: Import existing resources (if needed)
+        working-directory: ./terraform
+        continue-on-error: true
+        env:
+          TF_VAR_directory_admin_password: ${{ secrets.DIRECTORY_ADMIN_PASSWORD }}
+        run: |
+          # Import CloudWatch Log Group if it exists
+          terraform import module.vpc.aws_cloudwatch_log_group.vpc_flow_log /aws/vpc/innovatech-employee-lifecycle 2>/dev/null || true
+
       - name: Terraform Apply
         working-directory: ./terraform
         env:
