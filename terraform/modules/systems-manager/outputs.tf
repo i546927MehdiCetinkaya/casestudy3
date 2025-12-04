@@ -25,13 +25,9 @@ output "session_logs_log_group" {
   value       = var.enable_session_manager ? aws_cloudwatch_log_group.session_logs[0].name : null
 }
 
-output "ssm_endpoints" {
-  description = "VPC endpoints for Systems Manager"
-  value = var.enable_session_manager ? {
-    ssm         = aws_vpc_endpoint.ssm[0].id
-    ssmmessages = aws_vpc_endpoint.ssmmessages[0].id
-    ec2messages = aws_vpc_endpoint.ec2messages[0].id
-  } : null
+output "ssm_managed_instances_sg_id" {
+  description = "Security group ID for SSM managed instances"
+  value       = var.enable_session_manager ? aws_security_group.ssm_managed_instances[0].id : null
 }
 
 output "patch_baseline_id" {
