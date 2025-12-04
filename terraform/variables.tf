@@ -161,3 +161,32 @@ variable "workspace_logout_urls" {
   type        = list(string)
   default     = ["https://workspace.internal.innovatech.local/logout"]
 }
+
+# =============================================================================
+# OPENVPN CONFIGURATION
+# =============================================================================
+
+variable "enable_openvpn" {
+  description = "Enable OpenVPN server for secure remote access"
+  type        = bool
+  default     = false
+}
+
+variable "openvpn_key_name" {
+  description = "SSH key pair name for OpenVPN server"
+  type        = string
+  default     = "bastion-key"
+}
+
+variable "openvpn_instance_type" {
+  description = "EC2 instance type for OpenVPN server"
+  type        = string
+  default     = "t3.micro"
+}
+
+variable "openvpn_admin_password" {
+  description = "Admin password for OpenVPN web interface"
+  type        = string
+  sensitive   = true
+  default     = "ChangeMe123!"
+}

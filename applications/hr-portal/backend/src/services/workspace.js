@@ -43,6 +43,63 @@ function initK8sClient() {
 
 const WORKSPACE_NAMESPACE = 'workspaces';
 const ECR_REGISTRY = process.env.ECR_REGISTRY || '920120424621.dkr.ecr.eu-west-1.amazonaws.com';
+const AD_DOMAIN = process.env.AD_DOMAIN || 'innovatech.local';
+
+// Department to image mapping (Kasm-based workspace images)
+const DEPARTMENT_IMAGES = {
+  'infra': `${ECR_REGISTRY}/workspace-infra:latest`,
+  'infrastructure': `${ECR_REGISTRY}/workspace-infra:latest`,
+  'dev': `${ECR_REGISTRY}/workspace-dev:latest`,
+  'development': `${ECR_REGISTRY}/workspace-dev:latest`,
+  'developer': `${ECR_REGISTRY}/workspace-dev:latest`,
+  'hr': `${ECR_REGISTRY}/workspace-hr:latest`,
+  'human_resources': `${ECR_REGISTRY}/workspace-hr:latest`,
+  'default': `${ECR_REGISTRY}/workspace-hr:latest`
+};
+
+// Department resource configurations
+const DEPARTMENT_RESOURCES = {
+  'infra': {
+    requests: { cpu: '1', memory: '2Gi' },
+    limits: { cpu: '2', memory: '4Gi' },
+    storage: '20Gi'
+  },
+  'infrastructure': {
+    requests: { cpu: '1', memory: '2Gi' },
+    limits: { cpu: '2', memory: '4Gi' },
+    storage: '20Gi'
+  },
+  'dev': {
+    requests: { cpu: '1500m', memory: '3Gi' },
+    limits: { cpu: '3', memory: '6Gi' },
+    storage: '50Gi'
+  },
+  'development': {
+    requests: { cpu: '1500m', memory: '3Gi' },
+    limits: { cpu: '3', memory: '6Gi' },
+    storage: '50Gi'
+  },
+  'developer': {
+    requests: { cpu: '1500m', memory: '3Gi' },
+    limits: { cpu: '3', memory: '6Gi' },
+    storage: '50Gi'
+  },
+  'hr': {
+    requests: { cpu: '500m', memory: '1Gi' },
+    limits: { cpu: '1500m', memory: '3Gi' },
+    storage: '10Gi'
+  },
+  'human_resources': {
+    requests: { cpu: '500m', memory: '1Gi' },
+    limits: { cpu: '1500m', memory: '3Gi' },
+    storage: '10Gi'
+  },
+  'default': {
+    requests: { cpu: '500m', memory: '1Gi' },
+    limits: { cpu: '1', memory: '2Gi' },
+    storage: '10Gi'
+  }
+};
 
 /**
  * Sanitize name for Kubernetes resource naming
@@ -51,175 +108,445 @@ const ECR_REGISTRY = process.env.ECR_REGISTRY || '920120424621.dkr.ecr.eu-west-1
 function sanitizeK8sName(name) {
   return name
     .toLowerCase()
-    .normalize('NFD') // Decompose accented characters
-    .replace(/[\u0300-\u036f]/g, '') // Remove diacritics
-    .replace(/[^a-z0-9-]/g, '-') // Replace invalid chars with hyphen
-    .replace(/^-+|-+$/g, '') // Remove leading/trailing hyphens
-    .replace(/-+/g, '-') // Collapse multiple hyphens
-    .substring(0, 63); // K8s limit is 63 chars
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .replace(/-+/g, '-')
+    .substring(0, 63);
 }
 
 /**
- * Provision a new workspace for an employee
+ * Generate secure password for VNC access
+ */
+function generateSecurePassword() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+  const symbols = '!@#$%';
+  let password = '';
+  
+  // Ensure at least one of each type
+  password += chars.charAt(Math.floor(Math.random() * 26)); // uppercase
+  password += chars.charAt(Math.floor(Math.random() * 26) + 26); // lowercase
+  password += chars.charAt(Math.floor(Math.random() * 8) + 52); // number
+  password += symbols.charAt(Math.floor(Math.random() * symbols.length)); // symbol
+  
+  // Fill rest with random chars
+  for (let i = 0; i < 8; i++) {
+    password += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  
+  // Shuffle the password
+  return password.split('').sort(() => Math.random() - 0.5).join('');
+}
+
+/**
+ * Get department from employee data
+ */
+function getDepartment(employee) {
+  const dept = (employee.department || employee.role || 'default').toLowerCase();
+  return dept;
+}
+
+/**
+ * Provision a new Kasm workspace for an employee
  */
 async function provisionWorkspace(employee) {
-  // Initialize Kubernetes client
   if (!initK8sClient()) {
     throw new Error('Kubernetes client not available. Cannot provision workspace.');
   }
 
   const workspaceId = uuidv4();
-  const workspaceName = sanitizeK8sName(`${employee.firstName}-${employee.lastName}`);
-  const temporaryPassword = generateSecurePassword();
+  const department = getDepartment(employee);
+  const workspaceName = sanitizeK8sName(`ws-${employee.employeeId}`);
+  const vncPassword = generateSecurePassword();
 
-  logger.info(`Starting workspace provisioning for ${employee.employeeId}, name: ${workspaceName}`);
+  logger.info(`Provisioning Kasm workspace for ${employee.employeeId}, department: ${department}`);
 
   try {
-    // 0. Get AD configuration from SSM
-    let adConfig = null;
-    try {
-      adConfig = await ssmService.getDirectoryConfig();
-      if (adConfig && adConfig.enabled) {
-        logger.info(`AD configuration found: domain=${adConfig.domain}, dns=${adConfig.dnsServers}`);
-        
-        // Create AD admin password secret if it doesn't exist
-        const adAdminPassword = await ssmService.getDirectoryAdminPassword();
-        if (adAdminPassword) {
-          const adSecretName = 'ad-admin-secret';
-          try {
-            await k8sApi.readNamespacedSecret(adSecretName, WORKSPACE_NAMESPACE);
-            logger.info('AD admin secret already exists');
-          } catch (e) {
-            if (e.statusCode === 404) {
-              // Create the secret
-              await k8sApi.createNamespacedSecret(WORKSPACE_NAMESPACE, {
-                apiVersion: 'v1',
-                kind: 'Secret',
-                metadata: { name: adSecretName, namespace: WORKSPACE_NAMESPACE },
-                type: 'Opaque',
-                stringData: { password: adAdminPassword }
-              });
-              logger.info('AD admin secret created');
-            }
-          }
-          adConfig.adminPasswordSecretName = adSecretName;
-        } else {
-          logger.warn('AD admin password not found in SSM, AD join will be skipped');
-          adConfig = null;
-        }
-      } else {
-        logger.info('AD not enabled, using local authentication only');
-      }
-    } catch (adError) {
-      logger.warn(`Failed to get AD config: ${adError.message}, continuing without AD`);
-    }
+    // 1. Ensure namespace exists
+    await ensureNamespace();
 
-    // 1. Store temporary password in SSM Parameter Store (encrypted)
-    try {
-      await ssmService.storeTemporaryPassword(employee.employeeId, temporaryPassword);
-      logger.info(`Step 1: Temporary password stored in SSM for employee ${employee.employeeId}`);
-    } catch (ssmError) {
-      logger.warn(`Step 1 failed (SSM): ${ssmError.message}, continuing...`);
-    }
-    
-    // 2. Create Secret for workspace credentials (still needed for code-server)
-    try {
-      await createSecret(workspaceName, temporaryPassword);
-      logger.info(`Step 2: Secret created for ${workspaceName}`);
-    } catch (secretError) {
-      logger.error(`Step 2 failed (Secret): ${secretError.message}`);
-      throw secretError;
-    }
-    
-    // 3. Create Pod for workspace (with AD config if available)
-    try {
-      await createPod(workspaceName, employee, workspaceId, adConfig);
-      logger.info(`Step 3: Pod created for ${workspaceName}${adConfig?.enabled ? ' (with AD integration)' : ''}`);
-    } catch (podError) {
-      logger.error(`Step 3 failed (Pod): ${podError.message}`);
-      throw podError;
-    }
-    
-    // 4. Create Service (LoadBalancer type for external access)
-    try {
-      await createService(workspaceName);
-      logger.info(`Step 4: Service created for ${workspaceName}`);
-    } catch (serviceError) {
-      logger.error(`Step 4 failed (Service): ${serviceError.message}`);
-      throw serviceError;
-    }
-    
-    // 5. Wait for LoadBalancer URL (up to 2 minutes)
-    logger.info(`Step 5: Waiting for LoadBalancer URL...`);
-    const workspaceUrl = await getLoadBalancerURLFast(workspaceName);
-    logger.info(`Step 5: LoadBalancer URL obtained: ${workspaceUrl}`);
-    
-    // 6. Save workspace metadata to DynamoDB with real URL
+    // 2. Create Secret for VNC password
+    await createWorkspaceSecret(workspaceName, vncPassword, employee);
+    logger.info(`Secret created for ${workspaceName}`);
+
+    // 3. Create PVC for workspace data
+    await createWorkspacePVC(workspaceName, department);
+    logger.info(`PVC created for ${workspaceName}`);
+
+    // 4. Create Kasm workspace Pod
+    await createKasmPod(workspaceName, employee, department, workspaceId);
+    logger.info(`Kasm pod created for ${workspaceName}`);
+
+    // 5. Create Service for workspace access
+    await createWorkspaceService(workspaceName, employee.employeeId);
+    logger.info(`Service created for ${workspaceName}`);
+
+    // 6. Wait for pod to be ready and get access URL
+    // Use 300 seconds timeout to allow for image pull (Kasm images are ~3GB)
+    const accessUrl = await waitForWorkspaceReady(workspaceName, 300);
+    logger.info(`Workspace ready at: ${accessUrl}`);
+
+    // 7. Save workspace metadata
     const workspace = {
       workspaceId,
       employeeId: employee.employeeId,
       name: workspaceName,
-      url: workspaceUrl,
+      department,
+      url: accessUrl,
+      vncPort: 6901,
       status: 'active',
+      type: 'kasm',
       createdAt: new Date().toISOString(),
-      adEnabled: adConfig?.enabled || false,
       credentials: {
-        username: 'coder',
-        password: temporaryPassword
+        username: 'kasm_user',
+        password: vncPassword
       }
     };
-    
+
+    await dynamodbService.createWorkspace(workspace);
+    logger.info(`Workspace metadata saved to DynamoDB`);
+
+    // 8. Store password in SSM
     try {
-      await dynamodbService.createWorkspace(workspace);
-      logger.info(`Step 6: Workspace metadata saved to DynamoDB`);
-    } catch (dbError) {
-      logger.warn(`Step 6 failed (DynamoDB): ${dbError.message}, continuing...`);
+      await ssmService.storeTemporaryPassword(employee.employeeId, vncPassword);
+    } catch (ssmError) {
+      logger.warn(`Failed to store password in SSM: ${ssmError.message}`);
     }
-    
-    // 7. Store workspace metadata in SSM (optional)
-    try {
-      await ssmService.storeWorkspaceMetadata(workspace);
-      logger.info(`Step 7: Workspace metadata stored in SSM`);
-    } catch (ssmMetaError) {
-      logger.warn(`Step 7 failed (SSM Metadata): ${ssmMetaError.message}, continuing...`);
-    }
-    
-    // 8. Store audit log (optional)
-    try {
-      await ssmService.storeAuditLog('workspace_provisioned', employee.employeeId, {
-        workspaceId,
-        workspaceName,
-        workspaceUrl,
-        adEnabled: adConfig?.enabled || false
-      });
-      logger.info(`Step 8: Audit log stored`);
-    } catch (auditError) {
-      logger.warn(`Step 8 failed (Audit): ${auditError.message}, continuing...`);
-    }
-    
-    // 9. Send welcome email (async, don't wait)
-    emailService.sendWelcomeEmail(employee, workspace, temporaryPassword)
-      .then(result => logger.info(`Welcome email sent to ${employee.email}`))
+
+    // 9. Send welcome email
+    emailService.sendWelcomeEmail(employee, workspace, vncPassword)
+      .then(() => logger.info(`Welcome email sent to ${employee.email}`))
       .catch(err => logger.warn(`Failed to send welcome email: ${err.message}`));
-    
-    logger.info(`Workspace provisioned: ${workspaceId} for employee ${employee.employeeId}`);
-    
+
     return workspace;
+
   } catch (error) {
     logger.error(`Error provisioning workspace for ${employee.employeeId}:`, error);
-    // Cleanup on error
     await cleanupWorkspace(workspaceName);
     throw error;
   }
 }
 
 /**
+ * Ensure workspaces namespace exists
+ */
+async function ensureNamespace() {
+  try {
+    await k8sApi.readNamespace(WORKSPACE_NAMESPACE);
+    logger.info(`Namespace ${WORKSPACE_NAMESPACE} already exists`);
+  } catch (error) {
+    if (error.statusCode === 404) {
+      await k8sApi.createNamespace({
+        apiVersion: 'v1',
+        kind: 'Namespace',
+        metadata: {
+          name: WORKSPACE_NAMESPACE,
+          labels: {
+            name: WORKSPACE_NAMESPACE,
+            purpose: 'employee-workspaces'
+          }
+        }
+      });
+      logger.info(`Namespace ${WORKSPACE_NAMESPACE} created`);
+    } else {
+      throw error;
+    }
+  }
+}
+
+/**
+ * Create workspace secret with VNC password and employee info
+ */
+async function createWorkspaceSecret(name, vncPassword, employee) {
+  const secretName = `${name}-secret`;
+  const secret = {
+    apiVersion: 'v1',
+    kind: 'Secret',
+    metadata: {
+      name: secretName,
+      namespace: WORKSPACE_NAMESPACE,
+      labels: {
+        app: 'workspace',
+        employee: employee.employeeId,
+        type: 'kasm-workspace'
+      }
+    },
+    type: 'Opaque',
+    stringData: {
+      'vnc-password': vncPassword,
+      'employee-id': employee.employeeId,
+      'employee-email': employee.email || ''
+    }
+  };
+
+  try {
+    await k8sApi.createNamespacedSecret(WORKSPACE_NAMESPACE, secret);
+  } catch (error) {
+    if (error.statusCode === 409) {
+      await k8sApi.deleteNamespacedSecret(secretName, WORKSPACE_NAMESPACE);
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      await k8sApi.createNamespacedSecret(WORKSPACE_NAMESPACE, secret);
+    } else {
+      throw error;
+    }
+  }
+}
+
+/**
+ * Create PVC for workspace data persistence
+ */
+async function createWorkspacePVC(name, department) {
+  const pvcName = `${name}-pvc`;
+  const resources = DEPARTMENT_RESOURCES[department] || DEPARTMENT_RESOURCES.default;
+  
+  const pvc = {
+    apiVersion: 'v1',
+    kind: 'PersistentVolumeClaim',
+    metadata: {
+      name: pvcName,
+      namespace: WORKSPACE_NAMESPACE,
+      labels: {
+        app: 'workspace',
+        type: 'kasm-workspace'
+      }
+    },
+    spec: {
+      accessModes: ['ReadWriteOnce'],
+      storageClassName: 'gp2',
+      resources: {
+        requests: {
+          storage: resources.storage
+        }
+      }
+    }
+  };
+
+  try {
+    await k8sApi.createNamespacedPersistentVolumeClaim(WORKSPACE_NAMESPACE, pvc);
+  } catch (error) {
+    if (error.statusCode === 409) {
+      logger.warn(`PVC ${pvcName} already exists, using existing`);
+    } else {
+      throw error;
+    }
+  }
+}
+
+/**
+ * Create Kasm workspace pod
+ */
+async function createKasmPod(name, employee, department, workspaceId) {
+  const image = DEPARTMENT_IMAGES[department] || DEPARTMENT_IMAGES.default;
+  const resources = DEPARTMENT_RESOURCES[department] || DEPARTMENT_RESOURCES.default;
+  
+  const pod = {
+    apiVersion: 'v1',
+    kind: 'Pod',
+    metadata: {
+      name: name,
+      namespace: WORKSPACE_NAMESPACE,
+      labels: {
+        app: 'workspace',
+        department: department,
+        employee: employee.employeeId,
+        'workspace-id': workspaceId,
+        type: 'kasm-workspace'
+      },
+      annotations: {
+        'workspace.innovatech.local/employee-name': `${employee.firstName} ${employee.lastName}`,
+        'workspace.innovatech.local/created-at': new Date().toISOString()
+      }
+    },
+    spec: {
+      serviceAccountName: 'workspace-user',
+      securityContext: {
+        runAsUser: 1000,
+        runAsGroup: 1000,
+        fsGroup: 1000
+      },
+      containers: [{
+        name: 'workspace',
+        image: image,
+        imagePullPolicy: 'Always',
+        ports: [
+          { name: 'vnc', containerPort: 6901, protocol: 'TCP' }
+        ],
+        env: [
+          { name: 'EMPLOYEE_ID', value: employee.employeeId },
+          { name: 'EMPLOYEE_EMAIL', value: employee.email || '' },
+          { name: 'DEPARTMENT', value: department },
+          { name: 'AD_DOMAIN', value: AD_DOMAIN },
+          { 
+            name: 'VNC_PW', 
+            valueFrom: { 
+              secretKeyRef: { 
+                name: `${name}-secret`, 
+                key: 'vnc-password' 
+              } 
+            } 
+          }
+        ],
+        resources: {
+          requests: resources.requests,
+          limits: resources.limits
+        },
+        volumeMounts: [
+          {
+            name: 'workspace-data',
+            mountPath: '/home/kasm-user/workspace'
+          },
+          {
+            name: 'shm',
+            mountPath: '/dev/shm'
+          }
+        ],
+        livenessProbe: {
+          tcpSocket: {
+            port: 6901
+          },
+          initialDelaySeconds: 60,
+          periodSeconds: 30,
+          timeoutSeconds: 10,
+          failureThreshold: 5
+        },
+        readinessProbe: {
+          tcpSocket: {
+            port: 6901
+          },
+          initialDelaySeconds: 15,
+          periodSeconds: 5,
+          timeoutSeconds: 3,
+          successThreshold: 1,
+          failureThreshold: 30
+        }
+      }],
+      volumes: [
+        {
+          name: 'workspace-data',
+          persistentVolumeClaim: {
+            claimName: `${name}-pvc`
+          }
+        },
+        {
+          name: 'shm',
+          emptyDir: {
+            medium: 'Memory',
+            sizeLimit: '2Gi'
+          }
+        }
+      ],
+      restartPolicy: 'Always',
+      dnsPolicy: 'ClusterFirst',
+      terminationGracePeriodSeconds: 30
+    }
+  };
+
+  try {
+    await k8sApi.createNamespacedPod(WORKSPACE_NAMESPACE, pod);
+  } catch (error) {
+    if (error.statusCode === 409) {
+      logger.warn(`Pod ${name} already exists, deleting and recreating`);
+      await k8sApi.deleteNamespacedPod(name, WORKSPACE_NAMESPACE);
+      await new Promise(resolve => setTimeout(resolve, 5000));
+      await k8sApi.createNamespacedPod(WORKSPACE_NAMESPACE, pod);
+    } else {
+      throw error;
+    }
+  }
+}
+
+/**
+ * Create service for workspace access
+ */
+async function createWorkspaceService(name, employeeId) {
+  const serviceName = `${name}-svc`;
+  
+  const service = {
+    apiVersion: 'v1',
+    kind: 'Service',
+    metadata: {
+      name: serviceName,
+      namespace: WORKSPACE_NAMESPACE,
+      labels: {
+        app: 'workspace',
+        employee: employeeId,
+        type: 'kasm-workspace'
+      }
+    },
+    spec: {
+      type: 'NodePort',
+      ports: [
+        {
+          name: 'vnc',
+          port: 6901,
+          targetPort: 6901,
+          protocol: 'TCP'
+        }
+      ],
+      selector: {
+        app: 'workspace',
+        employee: employeeId
+      }
+    }
+  };
+
+  try {
+    await k8sApi.createNamespacedService(WORKSPACE_NAMESPACE, service);
+  } catch (error) {
+    if (error.statusCode === 409) {
+      logger.warn(`Service ${serviceName} already exists, using existing`);
+    } else {
+      throw error;
+    }
+  }
+}
+
+/**
+ * Wait for workspace pod to be ready
+ */
+async function waitForWorkspaceReady(name, timeoutSeconds = 120) {
+  const startTime = Date.now();
+  const timeoutMs = timeoutSeconds * 1000;
+  
+  while (Date.now() - startTime < timeoutMs) {
+    try {
+      const podResponse = await k8sApi.readNamespacedPod(name, WORKSPACE_NAMESPACE);
+      const pod = podResponse.body;
+      
+      if (pod.status.phase === 'Running') {
+        const ready = pod.status.conditions?.find(c => c.type === 'Ready')?.status === 'True';
+        if (ready) {
+          // Get service NodePort
+          const svcResponse = await k8sApi.readNamespacedService(`${name}-svc`, WORKSPACE_NAMESPACE);
+          const nodePort = svcResponse.body.spec.ports[0].nodePort;
+          
+          // Return VPN-accessible URL
+          return `https://workspace.innovatech.local:${nodePort}`;
+        }
+      }
+      
+      if (pod.status.phase === 'Failed') {
+        throw new Error('Pod failed to start');
+      }
+    } catch (error) {
+      if (error.statusCode !== 404) {
+        logger.warn(`Error checking pod status: ${error.message}`);
+      }
+    }
+    
+    await new Promise(resolve => setTimeout(resolve, 5000));
+  }
+  
+  throw new Error(`Workspace did not become ready within ${timeoutSeconds} seconds`);
+}
+
+/**
  * Deprovision workspace for an employee
  */
 async function deprovisionWorkspace(employeeId) {
-  // Initialize Kubernetes client
   if (!initK8sClient()) {
-    throw new Error('Kubernetes client not available. Cannot deprovision workspace.');
+    throw new Error('Kubernetes client not available');
   }
 
   try {
@@ -229,24 +556,16 @@ async function deprovisionWorkspace(employeeId) {
       return;
     }
 
-    const workspaceName = workspace.name;
-    
-    // Delete Kubernetes resources
-    await cleanupWorkspace(workspaceName);
-    
-    // Delete from DynamoDB
+    await cleanupWorkspace(workspace.name);
     await dynamodbService.deleteWorkspace(workspace.workspaceId);
     
-    // Delete temporary password from SSM
-    await ssmService.deleteTemporaryPassword(employeeId);
+    try {
+      await ssmService.deleteTemporaryPassword(employeeId);
+    } catch (e) {
+      logger.warn(`Failed to delete SSM password: ${e.message}`);
+    }
     
-    // Store audit log
-    await ssmService.storeAuditLog('workspace_deprovisioned', employeeId, {
-      workspaceId: workspace.workspaceId,
-      workspaceName
-    });
-    
-    logger.info(`Workspace deprovisioned: ${workspace.workspaceId} for employee ${employeeId}`);
+    logger.info(`Workspace deprovisioned for employee ${employeeId}`);
   } catch (error) {
     logger.error(`Error deprovisioning workspace for ${employeeId}:`, error);
     throw error;
@@ -254,418 +573,121 @@ async function deprovisionWorkspace(employeeId) {
 }
 
 /**
+ * Cleanup workspace resources
+ */
+async function cleanupWorkspace(name) {
+  const resources = [
+    { type: 'Pod', delete: () => k8sApi.deleteNamespacedPod(name, WORKSPACE_NAMESPACE) },
+    { type: 'Service', delete: () => k8sApi.deleteNamespacedService(`${name}-svc`, WORKSPACE_NAMESPACE) },
+    { type: 'Secret', delete: () => k8sApi.deleteNamespacedSecret(`${name}-secret`, WORKSPACE_NAMESPACE) },
+    { type: 'PVC', delete: () => k8sApi.deleteNamespacedPersistentVolumeClaim(`${name}-pvc`, WORKSPACE_NAMESPACE) }
+  ];
+
+  for (const resource of resources) {
+    try {
+      await resource.delete();
+      logger.info(`Deleted ${resource.type} for ${name}`);
+    } catch (error) {
+      if (error.statusCode !== 404) {
+        logger.warn(`Failed to delete ${resource.type} for ${name}: ${error.message}`);
+      }
+    }
+  }
+}
+
+/**
  * Get workspace status
  */
-async function getWorkspaceStatus(workspaceId) {
-  // Initialize Kubernetes client
+async function getWorkspaceStatus(employeeId) {
   if (!initK8sClient()) {
-    return { status: 'k8s_unavailable', error: 'Kubernetes client not available' };
+    return { status: 'k8s_unavailable' };
   }
 
   try {
-    const workspace = await dynamodbService.getWorkspaceByEmployee(workspaceId);
+    const workspace = await dynamodbService.getWorkspaceByEmployee(employeeId);
     if (!workspace) {
       return { status: 'not_found' };
     }
 
-    // Check pod status
     const podResponse = await k8sApi.readNamespacedPod(workspace.name, WORKSPACE_NAMESPACE);
     const pod = podResponse.body;
     
     return {
       status: pod.status.phase.toLowerCase(),
       ready: pod.status.conditions?.find(c => c.type === 'Ready')?.status === 'True',
-      url: workspace.url
+      url: workspace.url,
+      department: workspace.department,
+      type: workspace.type
     };
   } catch (error) {
-    logger.error(`Error getting workspace status for ${workspaceId}:`, error);
+    logger.error(`Error getting workspace status for ${employeeId}:`, error);
     return { status: 'error', error: error.message };
   }
 }
 
-// Helper functions
-async function createPVC(name) {
-  const pvcName = `${name}-pvc`;
-  const pvc = {
-    apiVersion: 'v1',
-    kind: 'PersistentVolumeClaim',
-    metadata: {
-      name: pvcName,
-      namespace: WORKSPACE_NAMESPACE
-    },
-    spec: {
-      accessModes: ['ReadWriteOnce'],
-      storageClassName: 'workspace-storage',
-      resources: {
-        requests: {
-          storage: '10Gi'
-        }
-      }
-    }
-  };
+/**
+ * List all workspaces
+ */
+async function listWorkspaces() {
+  if (!initK8sClient()) {
+    return [];
+  }
 
   try {
-    await k8sApi.createNamespacedPersistentVolumeClaim(WORKSPACE_NAMESPACE, pvc);
-  } catch (error) {
-    // Handle 409 Conflict - PVC already exists (likely from previous failed attempt)
-    if (error.statusCode === 409) {
-      logger.warn(`PVC ${pvcName} already exists, deleting and recreating...`);
-      try {
-        // Delete existing PVC
-        await k8sApi.deleteNamespacedPersistentVolumeClaim(pvcName, WORKSPACE_NAMESPACE);
-        // Wait a bit for deletion to propagate
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        // Retry creation
-        await k8sApi.createNamespacedPersistentVolumeClaim(WORKSPACE_NAMESPACE, pvc);
-        logger.info(`PVC ${pvcName} recreated successfully`);
-      } catch (retryError) {
-        logger.error(`Failed to recreate PVC ${pvcName}:`, retryError);
-        throw retryError;
-      }
-    } else {
-      throw error;
-    }
-  }
-}
-
-async function createSecret(name, password) {
-  const secretName = `${name}-secret`;
-  const secret = {
-    apiVersion: 'v1',
-    kind: 'Secret',
-    metadata: {
-      name: secretName,
-      namespace: WORKSPACE_NAMESPACE
-    },
-    type: 'Opaque',
-    stringData: {
-      password: password,
-      'vnc-password': password  // Also store as vnc-password for rebuild endpoint
-    }
-  };
-
-  try {
-    await k8sApi.createNamespacedSecret(WORKSPACE_NAMESPACE, secret);
-  } catch (error) {
-    // Handle 409 Conflict - Secret already exists
-    if (error.statusCode === 409) {
-      logger.warn(`Secret ${secretName} already exists, deleting and recreating...`);
-      try {
-        await k8sApi.deleteNamespacedSecret(secretName, WORKSPACE_NAMESPACE);
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        await k8sApi.createNamespacedSecret(WORKSPACE_NAMESPACE, secret);
-        logger.info(`Secret ${secretName} recreated successfully`);
-      } catch (retryError) {
-        logger.error(`Failed to recreate Secret ${secretName}:`, retryError);
-        throw retryError;
-      }
-    } else {
-      throw error;
-    }
-  }
-}
-
-async function createPod(name, employee, workspaceId, adConfig = null) {
-  // Map employee role to ServiceAccount
-  const roleToServiceAccount = {
-    'infra': 'workspace-infra',
-    'developer': 'workspace-developer',
-    'hr': 'workspace-hr',
-    'manager': 'workspace-manager',
-    'admin': 'workspace-admin'
-  };
-  const serviceAccountName = roleToServiceAccount[employee.role?.toLowerCase()] || 'workspace-default';
-
-  // Base environment variables
-  const envVars = [
-    { name: 'EMPLOYEE_ID', value: employee.employeeId },
-    { name: 'EMPLOYEE_EMAIL', value: employee.email },
-    { name: 'EMPLOYEE_ROLE', value: employee.role },
-    { name: 'USER', value: 'employee' },
-    { 
-      name: 'PASSWORD', 
-      valueFrom: { 
-        secretKeyRef: { 
-          name: `${name}-secret`, 
-          key: 'password' 
-        } 
-      } 
-    }
-  ];
-
-  // Add AD configuration if available
-  if (adConfig && adConfig.enabled) {
-    envVars.push(
-      { name: 'AD_DOMAIN', value: adConfig.domain },
-      { name: 'AD_REALM', value: adConfig.domain.toUpperCase() },
-      { name: 'AD_ADMIN_USER', value: 'Admin' },
-      { name: 'DNS_SERVERS', value: adConfig.dnsServers || '' }
+    const podsResponse = await k8sApi.listNamespacedPod(
+      WORKSPACE_NAMESPACE,
+      undefined, undefined, undefined, undefined,
+      'type=kasm-workspace'
     );
     
-    // AD admin password is passed via secret reference
-    if (adConfig.adminPasswordSecretName) {
-      envVars.push({
-        name: 'AD_ADMIN_PASSWORD',
-        valueFrom: {
-          secretKeyRef: {
-            name: adConfig.adminPasswordSecretName,
-            key: 'password'
-          }
-        }
-      });
-    }
-  }
-
-  const pod = {
-    apiVersion: 'v1',
-    kind: 'Pod',
-    metadata: {
-      name: name,
-      namespace: WORKSPACE_NAMESPACE,
-      labels: {
-        app: 'workspace',
-        employee: name,
-        employeeId: employee.employeeId,
-        role: employee.role,
-        workspaceId: workspaceId
-      }
-    },
-    spec: {
-      // Use department-specific ServiceAccount for IRSA
-      serviceAccountName: serviceAccountName,
-      automountServiceAccountToken: true, // Enable for IRSA
-      // Add DNS configuration for AD
-      dnsPolicy: adConfig?.enabled ? 'None' : 'ClusterFirst',
-      dnsConfig: adConfig?.enabled && adConfig.dnsServers ? {
-        nameservers: adConfig.dnsServers.split(' ').filter(ip => ip.trim()),
-        searches: [adConfig.domain, 'workspaces.svc.cluster.local', 'svc.cluster.local', 'cluster.local'],
-        options: [
-          { name: 'ndots', value: '5' }
-        ]
-      } : undefined,
-      containers: [{
-        name: 'linux-desktop',
-        image: `${ECR_REGISTRY}/employee-workspace:latest`,
-        imagePullPolicy: 'Always',
-        ports: [{
-          containerPort: 6080,
-          name: 'novnc'
-        }],
-        env: envVars,
-        volumeMounts: [
-          { name: 'workspace-storage', mountPath: '/home/employee/workspace' },
-          { name: 'tmp', mountPath: '/tmp' }
-        ],
-        resources: {
-          requests: { memory: '1Gi', cpu: '500m' },
-          limits: { memory: '2Gi', cpu: '1000m' }
-        },
-        // Linux desktop needs root for VNC setup, then drops to user
-        securityContext: {
-          runAsUser: 0,
-          allowPrivilegeEscalation: true
-        }
-      }],
-      volumes: [
-        // Use emptyDir for now (no EBS CSI driver issues)
-        // TODO: Switch back to PVC once EBS CSI driver is properly configured
-        { name: 'workspace-storage', emptyDir: { sizeLimit: '10Gi' } },
-        { name: 'tmp', emptyDir: {} }
-      ]
-    }
-  };
-
-  logger.info(`Creating pod ${name} with ServiceAccount ${serviceAccountName} (role: ${employee.role})`);
-  await k8sApi.createNamespacedPod(WORKSPACE_NAMESPACE, pod);
-}
-
-async function createService(name) {
-  const service = {
-    apiVersion: 'v1',
-    kind: 'Service',
-    metadata: {
-      name: name,
-      namespace: WORKSPACE_NAMESPACE,
-      annotations: {
-        'service.beta.kubernetes.io/aws-load-balancer-type': 'nlb',
-        'service.beta.kubernetes.io/aws-load-balancer-scheme': 'internet-facing'
-      }
-    },
-    spec: {
-      selector: {
-        employee: name
-      },
-      ports: [{
-        protocol: 'TCP',
-        port: 80,
-        targetPort: 6080
-      }],
-      type: 'LoadBalancer'
-    }
-  };
-
-  try {
-    const result = await k8sApi.createNamespacedService(WORKSPACE_NAMESPACE, service);
-    return result.body.metadata.name;
+    return podsResponse.body.items.map(pod => ({
+      name: pod.metadata.name,
+      employee: pod.metadata.labels.employee,
+      department: pod.metadata.labels.department,
+      status: pod.status.phase,
+      ready: pod.status.conditions?.find(c => c.type === 'Ready')?.status === 'True',
+      createdAt: pod.metadata.creationTimestamp
+    }));
   } catch (error) {
-    // Handle 409 Conflict - Service already exists or being deleted
-    if (error.statusCode === 409) {
-      logger.warn(`Service ${name} already exists or being deleted, waiting for deletion...`);
-      try {
-        // Try to delete if it exists
-        await k8sApi.deleteNamespacedService(name, WORKSPACE_NAMESPACE).catch(() => {});
-        
-        // Wait for service to be fully deleted (check every 2 seconds, max 30 seconds)
-        let deleted = false;
-        for (let i = 0; i < 15; i++) {
-          await new Promise(resolve => setTimeout(resolve, 2000));
-          try {
-            await k8sApi.readNamespacedService(name, WORKSPACE_NAMESPACE);
-            logger.info(`Waiting for Service ${name} deletion... (${i+1}/15)`);
-          } catch (e) {
-            if (e.statusCode === 404) {
-              deleted = true;
-              logger.info(`Service ${name} fully deleted`);
-              break;
-            }
-          }
-        }
-        
-        if (!deleted) {
-          logger.warn(`Service ${name} still exists after 30s, proceeding anyway...`);
-        }
-        
-        // Retry creation
-        const result = await k8sApi.createNamespacedService(WORKSPACE_NAMESPACE, service);
-        logger.info(`Service ${name} recreated successfully`);
-        return result.body.metadata.name;
-      } catch (retryError) {
-        logger.error(`Failed to recreate Service ${name}:`, retryError);
-        throw retryError;
-      }
-    } else {
-      throw error;
-    }
+    logger.error('Error listing workspaces:', error);
+    return [];
   }
-}
-
-async function getLoadBalancerURL(name) {
-  // Wait for LoadBalancer to get external IP/hostname
-  let retries = 0;
-  const maxRetries = 30; // Wait up to 5 minutes (30 * 10 seconds)
-  
-  while (retries < maxRetries) {
-    try {
-      const service = await k8sApi.readNamespacedService(name, WORKSPACE_NAMESPACE);
-      const loadBalancer = service.body.status?.loadBalancer;
-      
-      if (loadBalancer?.ingress && loadBalancer.ingress.length > 0) {
-        const hostname = loadBalancer.ingress[0].hostname || loadBalancer.ingress[0].ip;
-        if (hostname) {
-          return `http://${hostname}`;
-        }
-      }
-    } catch (error) {
-      logger.warn(`Error checking LoadBalancer status: ${error.message}`);
-    }
-    
-    await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10 seconds
-    retries++;
-  }
-  
-  // Fallback if LoadBalancer is not ready yet
-  logger.warn(`LoadBalancer not ready after ${maxRetries} retries for ${name}`);
-  return `http://${name}.${WORKSPACE_NAMESPACE}.svc.cluster.local`;
 }
 
 /**
- * Fast version of getLoadBalancerURL - waits up to 2 minutes with shorter intervals
+ * Restart workspace for an employee
  */
-async function getLoadBalancerURLFast(name) {
-  const maxRetries = 24; // Wait up to 2 minutes (24 * 5 seconds)
-  
-  for (let i = 0; i < maxRetries; i++) {
-    try {
-      const service = await k8sApi.readNamespacedService(name, WORKSPACE_NAMESPACE);
-      const loadBalancer = service.body.status?.loadBalancer;
-      
-      if (loadBalancer?.ingress && loadBalancer.ingress.length > 0) {
-        const hostname = loadBalancer.ingress[0].hostname || loadBalancer.ingress[0].ip;
-        if (hostname) {
-          logger.info(`LoadBalancer URL ready after ${i * 5} seconds: ${hostname}`);
-          return `http://${hostname}`;
-        }
-      }
-    } catch (error) {
-      logger.warn(`Error checking LoadBalancer status (attempt ${i+1}): ${error.message}`);
-    }
-    
-    if (i < maxRetries - 1) {
-      logger.info(`Waiting for LoadBalancer... (${(i+1) * 5}s / 120s)`);
-      await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds
-    }
+async function restartWorkspace(employeeId) {
+  if (!initK8sClient()) {
+    throw new Error('Kubernetes client not available');
   }
-  
-  // If still not ready, throw error instead of using local URL
-  throw new Error(`LoadBalancer not ready after 2 minutes for ${name}. Please try again later.`);
-}
 
-/**
- * Asynchronously wait for LoadBalancer URL and send welcome email
- */
-async function getLoadBalancerURLAndSendEmail(workspaceName, employee, workspace, temporaryPassword) {
   try {
-    logger.info(`Starting async LoadBalancer check for ${workspaceName}...`);
-    
-    // Get the actual LoadBalancer URL (waits up to 5 minutes)
-    const loadBalancerUrl = await getLoadBalancerURL(workspaceName);
-    
-    // Update workspace with real URL
-    workspace.url = loadBalancerUrl;
-    
-    // Update DynamoDB with real URL
-    await dynamodbService.updateWorkspace(workspace.workspaceId, { url: loadBalancerUrl });
-    
-    logger.info(`LoadBalancer ready for ${workspaceName}: ${loadBalancerUrl}`);
-    
-    // Send welcome email with real LoadBalancer URL
-    const result = await emailService.sendWelcomeEmail(employee, workspace, temporaryPassword);
-    logger.info(`Welcome email sent to ${employee.email}, MessageId: ${result.messageId}`);
-    
-    // Store audit log for email sent
-    await ssmService.storeAuditLog('welcome_email_sent', employee.employeeId, {
-      messageId: result.messageId,
-      recipient: employee.email,
-      workspaceUrl: loadBalancerUrl
-    });
-  } catch (error) {
-    logger.error(`Failed to get LoadBalancer URL or send email for ${workspaceName}:`, error);
-  }
-}
+    const workspace = await dynamodbService.getWorkspaceByEmployee(employeeId);
+    if (!workspace) {
+      throw new Error(`No workspace found for employee ${employeeId}`);
+    }
 
-async function cleanupWorkspace(name) {
-  try {
-    // Delete in reverse order (no ingress anymore, using LoadBalancer)
-    await k8sApi.deleteNamespacedService(name, WORKSPACE_NAMESPACE).catch(() => {});
-    await k8sApi.deleteNamespacedPod(name, WORKSPACE_NAMESPACE).catch(() => {});
-    await k8sApi.deleteNamespacedSecret(`${name}-secret`, WORKSPACE_NAMESPACE).catch(() => {});
-    await k8sApi.deleteNamespacedPersistentVolumeClaim(`${name}-pvc`, WORKSPACE_NAMESPACE).catch(() => {});
+    // Delete pod (it will be recreated by Kubernetes since restartPolicy: Always)
+    await k8sApi.deleteNamespacedPod(workspace.name, WORKSPACE_NAMESPACE);
+    logger.info(`Workspace ${workspace.name} restarted for employee ${employeeId}`);
+    
+    return { success: true, message: 'Workspace restarting' };
   } catch (error) {
-    logger.error(`Error cleaning up workspace ${name}:`, error);
+    logger.error(`Error restarting workspace for ${employeeId}:`, error);
+    throw error;
   }
-}
-
-function generateSecurePassword() {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*';
-  let password = '';
-  for (let i = 0; i < 16; i++) {
-    password += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return password;
 }
 
 module.exports = {
   provisionWorkspace,
   deprovisionWorkspace,
-  getWorkspaceStatus
+  getWorkspaceStatus,
+  listWorkspaces,
+  restartWorkspace,
+  cleanupWorkspace,
+  sanitizeK8sName,
+  generateSecurePassword,
+  DEPARTMENT_IMAGES,
+  DEPARTMENT_RESOURCES
 };

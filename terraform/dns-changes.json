@@ -1,0 +1,22 @@
+﻿{
+  \"Changes\": [
+    {
+      \"Action\": \"UPSERT\",
+      \"ResourceRecordSet\": {
+        \"Name\": \"hrportal.innovatech.local\",
+        \"Type\": \"A\",
+        \"TTL\": 300,
+        \"ResourceRecords\": [{\"Value\": \"10.0.58.37\"}]
+      }
+    },
+    {
+      \"Action\": \"UPSERT\",
+      \"ResourceRecordSet\": {
+        \"Name\": \"api.innovatech.local\",
+        \"Type\": \"A\",
+        \"TTL\": 300,
+        \"ResourceRecords\": [{\"Value\": \"10.0.58.37\"}]
+      }
+    }
+  ]
+}

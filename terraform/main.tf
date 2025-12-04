@@ -251,3 +251,26 @@ module "route53" {
   cluster_name = var.cluster_name
   environment  = var.environment
 }
+
+# =============================================================================
+# OPENVPN MODULE - Cost-effective VPN for Zero Trust Access
+# =============================================================================
+module "openvpn" {
+  source = "./modules/openvpn"
+  count  = var.enable_openvpn ? 1 : 0
+
+  project_name     = var.cluster_name
+  environment      = var.environment
+  vpc_id           = module.vpc.vpc_id
+  vpc_cidr         = var.vpc_cidr
+  public_subnet_id = module.vpc.public_subnet_ids[0]
+  key_name         = var.openvpn_key_name
+  instance_type    = var.openvpn_instance_type
+  admin_password   = var.openvpn_admin_password
+  domain_name      = var.domain_name
+  # Use VPC DNS - actual service IPs will be resolved via Route53 private zone
+  hr_portal_ip     = cidrhost(var.vpc_cidr, 100) # Placeholder, will use Route53
+  api_ip           = cidrhost(var.vpc_cidr, 101) # Placeholder, will use Route53
+
+  depends_on = [module.vpc]
+}

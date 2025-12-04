@@ -1,0 +1,164 @@
+# Workspace Pod Template for Development Department
+apiVersion: v1
+kind: Pod
+metadata:
+  name: workspace-${EMPLOYEE_ID}
+  namespace: workspaces
+  labels:
+    app: workspace
+    department: development
+    employee: "${EMPLOYEE_ID}"
+    type: kasm-workspace
+  annotations:
+    description: "Development workspace for employee ${EMPLOYEE_ID}"
+spec:
+  serviceAccountName: workspace-user
+  securityContext:
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+  containers:
+  - name: workspace
+    image: ${ECR_REGISTRY}/workspace-dev:latest
+    imagePullPolicy: Always
+    ports:
+    - name: vnc
+      containerPort: 6901
+      protocol: TCP
+    - name: web
+      containerPort: 443
+      protocol: TCP
+    env:
+    - name: EMPLOYEE_ID
+      value: "${EMPLOYEE_ID}"
+    - name: EMPLOYEE_EMAIL
+      value: "${EMPLOYEE_EMAIL}"
+    - name: DEPARTMENT
+      value: "development"
+    - name: AD_DOMAIN
+      value: "innovatech.local"
+    - name: VNC_PW
+      valueFrom:
+        secretKeyRef:
+          name: workspace-${EMPLOYEE_ID}-secret
+          key: vnc-password
+    # Development specific env vars
+    - name: JAVA_HOME
+      value: "/usr/lib/jvm/java-17-openjdk-amd64"
+    - name: NODE_ENV
+      value: "development"
+    resources:
+      requests:
+        cpu: "1500m"
+        memory: "3Gi"
+      limits:
+        cpu: "3"
+        memory: "6Gi"
+    volumeMounts:
+    - name: workspace-data
+      mountPath: /home/kasm-user/workspace
+    - name: projects
+      mountPath: /home/kasm-user/projects
+    - name: shm
+      mountPath: /dev/shm
+    - name: docker-socket
+      mountPath: /var/run/docker.sock
+    livenessProbe:
+      httpGet:
+        path: /
+        port: 6901
+        scheme: HTTPS
+      initialDelaySeconds: 30
+      periodSeconds: 10
+    readinessProbe:
+      httpGet:
+        path: /
+        port: 6901
+        scheme: HTTPS
+      initialDelaySeconds: 10
+      periodSeconds: 5
+  volumes:
+  - name: workspace-data
+    persistentVolumeClaim:
+      claimName: workspace-${EMPLOYEE_ID}-pvc
+  - name: projects
+    persistentVolumeClaim:
+      claimName: workspace-${EMPLOYEE_ID}-projects-pvc
+  - name: shm
+    emptyDir:
+      medium: Memory
+      sizeLimit: 4Gi
+  - name: docker-socket
+    hostPath:
+      path: /var/run/docker.sock
+      type: Socket
+  restartPolicy: Always
+  dnsPolicy: ClusterFirst
+  terminationGracePeriodSeconds: 30
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: workspace-${EMPLOYEE_ID}-pvc
+  namespace: workspaces
+  labels:
+    app: workspace
+    employee: "${EMPLOYEE_ID}"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: gp2
+  resources:
+    requests:
+      storage: 30Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: workspace-${EMPLOYEE_ID}-projects-pvc
+  namespace: workspaces
+  labels:
+    app: workspace
+    employee: "${EMPLOYEE_ID}"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: gp2
+  resources:
+    requests:
+      storage: 50Gi
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: workspace-${EMPLOYEE_ID}-secret
+  namespace: workspaces
+  labels:
+    app: workspace
+    employee: "${EMPLOYEE_ID}"
+type: Opaque
+stringData:
+  vnc-password: "${VNC_PASSWORD}"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: workspace-${EMPLOYEE_ID}-svc
+  namespace: workspaces
+  labels:
+    app: workspace
+    employee: "${EMPLOYEE_ID}"
+spec:
+  type: ClusterIP
+  ports:
+  - name: vnc
+    port: 6901
+    targetPort: 6901
+    protocol: TCP
+  - name: web
+    port: 443
+    targetPort: 443
+    protocol: TCP
+  selector:
+    app: workspace
+    employee: "${EMPLOYEE_ID}"

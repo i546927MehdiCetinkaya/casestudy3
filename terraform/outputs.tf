@@ -223,5 +223,29 @@ output "zero_trust_summary" {
     authentication      = "AWS Cognito with MFA"
     network_isolation   = "VPC Endpoints for AWS services"
     workspace_isolation = "Per-employee network policies"
+    vpn_enabled         = var.enable_openvpn
   }
+}
+
+# =============================================================================
+# OPENVPN OUTPUTS
+# =============================================================================
+output "openvpn_public_ip" {
+  description = "Public IP address of OpenVPN server"
+  value       = var.enable_openvpn ? module.openvpn[0].vpn_public_ip : null
+}
+
+output "openvpn_connection_info" {
+  description = "OpenVPN connection instructions"
+  value       = var.enable_openvpn ? module.openvpn[0].vpn_connection_instructions : "OpenVPN not enabled"
+}
+
+output "openvpn_hr_portal_fqdn" {
+  description = "HR Portal FQDN accessible via VPN"
+  value       = var.enable_openvpn ? module.openvpn[0].hr_portal_fqdn : null
+}
+
+output "openvpn_api_fqdn" {
+  description = "API FQDN accessible via VPN"
+  value       = var.enable_openvpn ? module.openvpn[0].api_fqdn : null
 }
