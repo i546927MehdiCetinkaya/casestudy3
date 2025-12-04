@@ -255,22 +255,8 @@ resource "aws_vpc_endpoint" "monitoring" {
 
 # =============================================================================
 # COGNITO ENDPOINTS - For HR Portal Authentication
+# Note: cognito-identity VPC endpoint is not available in all regions
 # =============================================================================
-
-# Cognito Identity VPC Endpoint
-resource "aws_vpc_endpoint" "cognito_identity" {
-  vpc_id              = var.vpc_id
-  service_name        = "com.amazonaws.${data.aws_region.current.name}.cognito-identity"
-  vpc_endpoint_type   = "Interface"
-  subnet_ids          = var.private_subnet_ids
-  security_group_ids  = [aws_security_group.vpc_endpoints.id]
-  private_dns_enabled = true
-
-  tags = {
-    Name        = "cognito-identity-endpoint"
-    Environment = var.environment
-  }
-}
 
 # Cognito IDP VPC Endpoint (User Pools)
 resource "aws_vpc_endpoint" "cognito_idp" {

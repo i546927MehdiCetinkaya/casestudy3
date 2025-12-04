@@ -1,82 +1,30 @@
 # AWS Systems Manager Main Configuration
 # This module provides Intune-like capabilities for workspace management
+# Note: SSM VPC Endpoints are created in the vpc-endpoints module to avoid duplication
 
 # ============================================================================
 # Session Manager Configuration (Remote Access)
 # ============================================================================
 
-# VPC Endpoints for Systems Manager (required for private subnets)
-resource "aws_vpc_endpoint" "ssm" {
+# Security Group for workspace instances to use Session Manager
+resource "aws_security_group" "ssm_managed_instances" {
   count = var.enable_session_manager ? 1 : 0
 
-  vpc_id              = var.vpc_id
-  service_name        = "com.amazonaws.${data.aws_region.current.name}.ssm"
-  vpc_endpoint_type   = "Interface"
-  subnet_ids          = var.private_subnet_ids
-  security_group_ids  = [aws_security_group.ssm_endpoints[0].id]
-  private_dns_enabled = true
-
-  tags = merge(var.tags, {
-    Name = "${var.cluster_name}-ssm-endpoint"
-  })
-}
-
-resource "aws_vpc_endpoint" "ssmmessages" {
-  count = var.enable_session_manager ? 1 : 0
-
-  vpc_id              = var.vpc_id
-  service_name        = "com.amazonaws.${data.aws_region.current.name}.ssmmessages"
-  vpc_endpoint_type   = "Interface"
-  subnet_ids          = var.private_subnet_ids
-  security_group_ids  = [aws_security_group.ssm_endpoints[0].id]
-  private_dns_enabled = true
-
-  tags = merge(var.tags, {
-    Name = "${var.cluster_name}-ssmmessages-endpoint"
-  })
-}
-
-resource "aws_vpc_endpoint" "ec2messages" {
-  count = var.enable_session_manager ? 1 : 0
-
-  vpc_id              = var.vpc_id
-  service_name        = "com.amazonaws.${data.aws_region.current.name}.ec2messages"
-  vpc_endpoint_type   = "Interface"
-  subnet_ids          = var.private_subnet_ids
-  security_group_ids  = [aws_security_group.ssm_endpoints[0].id]
-  private_dns_enabled = true
-
-  tags = merge(var.tags, {
-    Name = "${var.cluster_name}-ec2messages-endpoint"
-  })
-}
-
-# Security Group for VPC Endpoints
-resource "aws_security_group" "ssm_endpoints" {
-  count = var.enable_session_manager ? 1 : 0
-
-  name_prefix = "${var.cluster_name}-ssm-endpoints-"
-  description = "Security group for Systems Manager VPC endpoints"
+  name_prefix = "${var.cluster_name}-ssm-managed-"
+  description = "Security group for instances managed by Systems Manager"
   vpc_id      = var.vpc_id
 
-  ingress {
-    description = "HTTPS from VPC"
+  # SSM requires outbound HTTPS to VPC endpoints
+  egress {
+    description = "HTTPS to VPC endpoints"
     from_port   = 443
     to_port     = 443
     protocol    = "tcp"
     cidr_blocks = [data.aws_vpc.selected.cidr_block]
   }
 
-  egress {
-    description = "Allow all outbound"
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
   tags = merge(var.tags, {
-    Name = "${var.cluster_name}-ssm-endpoints-sg"
+    Name = "${var.cluster_name}-ssm-managed-sg"
   })
 }
 
