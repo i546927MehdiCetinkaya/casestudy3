@@ -27,6 +27,7 @@ import {
   Tab,
   Link,
   Tooltip,
+  Avatar,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -37,9 +38,12 @@ import {
   Computer as ComputerIcon,
   ContentCopy as CopyIcon,
   OpenInNew as OpenIcon,
+  Logout as LogoutIcon,
 } from '@mui/icons-material';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import axios from 'axios';
+import Login from './auth/Login';
+import { isAuthenticated, getCurrentUser, signOut, getIdToken, isHRAdmin } from './auth/cognito';
 
 // Create Material-UI theme
 const theme = createTheme({
@@ -56,7 +60,18 @@ const theme = createTheme({
 // API configuration - use same origin (LoadBalancer handles routing)
 const API_BASE_URL = process.env.REACT_APP_API_URL || window.location.origin;
 
+// Configure axios to include auth token
+axios.interceptors.request.use((config) => {
+  const token = getIdToken();
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
 function App() {
+  const [user, setUser] = useState(null);
+  const [authChecked, setAuthChecked] = useState(false);
   const [employees, setEmployees] = useState([]);
   const [workspaces, setWorkspaces] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -76,11 +91,34 @@ function App() {
     department: 'Engineering',
   });
 
-  // Fetch employees and workspaces on component mount
+  // Check authentication on mount
   useEffect(() => {
-    fetchEmployees();
-    fetchWorkspaces();
+    if (isAuthenticated()) {
+      setUser(getCurrentUser());
+    }
+    setAuthChecked(true);
   }, []);
+
+  // Fetch employees and workspaces when authenticated
+  useEffect(() => {
+    if (user) {
+      fetchEmployees();
+      fetchWorkspaces();
+    }
+  }, [user]);
+
+  // Handle logout
+  const handleLogout = () => {
+    signOut();
+    setUser(null);
+    setEmployees([]);
+    setWorkspaces([]);
+  };
+
+  // Handle successful login
+  const handleLoginSuccess = (loggedInUser) => {
+    setUser(loggedInUser);
+  };
 
   // Auto-hide alerts after 5 seconds
   useEffect(() => {
@@ -220,6 +258,26 @@ function App() {
     return status === 'active' ? 'success' : 'default';
   };
 
+  // Show loading while checking auth
+  if (!authChecked) {
+    return (
+      <ThemeProvider theme={theme}>
+        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh' }}>
+          <CircularProgress />
+        </Box>
+      </ThemeProvider>
+    );
+  }
+
+  // Show login if not authenticated
+  if (!user) {
+    return (
+      <ThemeProvider theme={theme}>
+        <Login onLoginSuccess={handleLoginSuccess} />
+      </ThemeProvider>
+    );
+  }
+
   return (
     <ThemeProvider theme={theme}>
       <Box sx={{ flexGrow: 1 }}>
@@ -230,9 +288,24 @@ function App() {
             <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
               InnovaTech HR Portal
             </Typography>
-            <Typography variant="body2">
-              Employee Lifecycle Management
-            </Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+              <Chip
+                avatar={<Avatar>{user.name?.charAt(0) || 'U'}</Avatar>}
+                label={user.name || user.email}
+                variant="outlined"
+                sx={{ color: 'white', borderColor: 'rgba(255,255,255,0.5)' }}
+              />
+              {user.groups?.length > 0 && (
+                <Chip
+                  label={user.groups[0]}
+                  size="small"
+                  sx={{ bgcolor: 'rgba(255,255,255,0.2)', color: 'white' }}
+                />
+              )}
+              <IconButton color="inherit" onClick={handleLogout} title="Logout">
+                <LogoutIcon />
+              </IconButton>
+            </Box>
           </Toolbar>
         </AppBar>
 
