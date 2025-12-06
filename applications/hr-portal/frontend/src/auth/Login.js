@@ -12,7 +12,8 @@ import {
 } from '@mui/material';
 import { Lock as LockIcon } from '@mui/icons-material';
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://hr-portal-backend';
+// Use empty string for API_URL - nginx will proxy /api/* to backend
+const API_URL = '';
 
 function Login({ onLoginSuccess }) {
   const [email, setEmail] = useState('');
