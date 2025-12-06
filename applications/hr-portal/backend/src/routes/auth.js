@@ -9,8 +9,8 @@ const router = express.Router();
 const users = [
   {
     id: 'admin-1',
-    username: 'admin',
-    password: '$2a$10$xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', // 'admin123'
+    username: 'hr-admin',
+    password: '$2a$10$TMb3kwqITWg0NPTJgNGBKu6CndZ.YJdmj0A/RsTX.DPHiwMNhQPl.', // 'hrportal2025'
     role: 'admin'
   }
 ];
