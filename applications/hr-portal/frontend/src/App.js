@@ -653,7 +653,7 @@ function App() {
                             <Box sx={{ mb: 1 }}>
                               <Typography variant="caption" color="text.secondary">Username:</Typography>
                               <Typography variant="body2" fontFamily="monospace" sx={{ bgcolor: 'white', px: 1, py: 0.5, borderRadius: 1, border: '1px solid #ddd', display: 'inline-block' }}>
-                                kasm_user
+                                {workspace.credentials?.username || 'N/A'}
                               </Typography>
                             </Box>
 
