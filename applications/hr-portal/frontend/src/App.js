@@ -191,14 +191,45 @@ function App() {
       // Refresh workspaces list
       await fetchWorkspaces();
       
-      // Show success for 3 seconds before removing status
-      setTimeout(() => {
-        setProvisioningEmployees(prev => {
-          const newMap = new Map(prev);
-          newMap.delete(employeeId);
-          return newMap;
-        });
-      }, 3000);
+      // Keep provisioning status visible until workspace fully appears in the list
+      // Poll for workspace completion (backend confirms it's ready)
+      let pollAttempts = 0;
+      const maxPollAttempts = 40; // 40 attempts * 5 seconds = 3+ minutes max
+      
+      const pollInterval = setInterval(async () => {
+        pollAttempts++;
+        
+        try {
+          // Refresh workspace list to check if it appears
+          await fetchWorkspaces();
+          
+          // Check if workspace now exists in the list
+          const updatedWorkspace = getEmployeeWorkspace(employeeId);
+          
+          if (updatedWorkspace) {
+            // Workspace confirmed in list, safe to remove provisioning status
+            clearInterval(pollInterval);
+            setProvisioningEmployees(prev => {
+              const newMap = new Map(prev);
+              newMap.delete(employeeId);
+              return newMap;
+            });
+            setSuccess(`✓ Workspace is ready! Access: ${updatedWorkspace.dnsName || updatedWorkspace.url}`);
+          } else if (pollAttempts >= maxPollAttempts) {
+            // Timeout after max attempts
+            clearInterval(pollInterval);
+            setProvisioningEmployees(prev => {
+              const newMap = new Map(prev);
+              newMap.delete(employeeId);
+              return newMap;
+            });
+            setError('Workspace provisioning timed out. Please refresh the page to check status.');
+          }
+        } catch (err) {
+          console.error('Error polling workspace status:', err);
+          // Continue polling even on error
+        }
+      }, 5000); // Poll every 5 seconds
       
     } catch (err) {
       const errorMsg = err.response?.data?.error || err.message;
@@ -517,8 +548,11 @@ function App() {
                                   <Typography variant="caption" color="info.dark" display="block" sx={{ pl: 3.5 }}>
                                     {provisioningEmployees.get(employee.employeeId)}
                                   </Typography>
-                                  <Typography variant="caption" color="text.secondary" display="block" sx={{ pl: 3.5, mt: 0.5 }}>
-                                    This may take 2-5 minutes. Please wait...
+                                  <Typography variant="caption" color="text.secondary" display="block" sx={{ pl: 3.5, mt: 0.5, fontWeight: 600 }}>
+                                    ⏳ This takes 2-5 minutes. Please wait and do NOT click again!
+                                  </Typography>
+                                  <Typography variant="caption" color="text.secondary" display="block" sx={{ pl: 3.5, mt: 0.5, fontStyle: 'italic' }}>
+                                    The button will automatically reappear when complete.
                                   </Typography>
                                 </Box>
                               ) : (
