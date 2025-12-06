@@ -223,7 +223,7 @@ async function provisionWorkspace(employee) {
       type: 'kasm',
       createdAt: new Date().toISOString(),
       credentials: {
-        username: 'kasm_user',
+        username: employee.firstName.toLowerCase(),
         password: vncPassword
       }
     };
