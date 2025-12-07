@@ -61,6 +61,15 @@ spec:
             name: hr-portal-config
         - secretRef:
             name: hr-portal-secrets
+        - secretRef:
+            name: ad-credentials
+        - configMapRef:
+            name: ad-config
+        env:
+        - name: ROUTE53_HOSTED_ZONE_ID
+          value: "Z0206991D2VAV0U5DTHR"
+        - name: ROUTE53_DOMAIN
+          value: "innovatech.local"
         resources:
           requests:
             memory: "256Mi"
@@ -74,6 +83,8 @@ spec:
             port: 3000
           initialDelaySeconds: 30
           periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
         readinessProbe:
           httpGet:
             path: /ready
