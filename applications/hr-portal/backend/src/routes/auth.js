@@ -1,24 +1,16 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
-const bcrypt = require('bcryptjs');
 const { body, validationResult } = require('express-validator');
+const ldapService = require('../services/ldap');
+const { getUserPermissions } = require('../middleware/rbac');
+const logger = require('../utils/logger');
 
 const router = express.Router();
 
-// Mock user store (replace with actual user management)
-const users = [
-  {
-    id: 'admin-1',
-    username: 'hr-admin',
-    password: '$2a$10$TMb3kwqITWg0NPTJgNGBKu6CndZ.YJdmj0A/RsTX.DPHiwMNhQPl.', // 'hrportal2025'
-    role: 'admin'
-  }
-];
-
-// Login
+// Login with Active Directory credentials
 router.post('/login',
   [
-    body('username').notEmpty(),
+    body('username').notEmpty().trim(),
     body('password').notEmpty()
   ],
   async (req, res, next) => {
@@ -29,20 +21,69 @@ router.post('/login',
       }
 
       const { username, password } = req.body;
-      const user = users.find(u => u.username === username);
+      
+      logger.info(`[AUTH] Login attempt for user: ${username}`);
 
-      if (!user || !await bcrypt.compare(password, user.password)) {
-        return res.status(401).json({ error: 'Invalid credentials' });
+      // Authenticate against Active Directory
+      const authResult = await ldapService.authenticate(username, password);
+      
+      if (!authResult.success) {
+        logger.warn(`[AUTH] Failed login attempt for user: ${username}`);
+        return res.status(401).json({ 
+          error: 'Invalid credentials',
+          message: 'Unable to authenticate with Active Directory'
+        });
       }
 
+      // Get user groups and details from AD
+      const userDetails = await ldapService.getUserDetails(username);
+      
+      if (!userDetails) {
+        logger.error(`[AUTH] Could not retrieve user details for: ${username}`);
+        return res.status(500).json({ 
+          error: 'Authentication error',
+          message: 'Could not retrieve user information'
+        });
+      }
+
+      // Determine primary role based on groups
+      let role = 'user';
+      if (userDetails.groups.includes('HR-Admins')) role = 'hr-admin';
+      else if (userDetails.groups.includes('IT-Admins')) role = 'it-admin';
+      else if (userDetails.groups.includes('Dept-Managers')) role = 'manager';
+
+      // Get user permissions based on group membership
+      const permissions = getUserPermissions(userDetails.groups);
+
+      // Generate JWT with user info and groups
       const token = jwt.sign(
-        { id: user.id, username: user.username, role: user.role },
+        { 
+          username: userDetails.username,
+          displayName: userDetails.displayName,
+          email: userDetails.email,
+          groups: userDetails.groups,
+          role: role,
+          permissions: permissions
+        },
         process.env.JWT_SECRET || 'your-secret-key',
         { expiresIn: '8h' }
       );
 
-      res.json({ token, user: { id: user.id, username: user.username, role: user.role } });
+      logger.info(`[AUTH] Successful login for ${username} (groups: ${userDetails.groups.join(', ')})`);
+
+      res.json({ 
+        token, 
+        user: {
+          username: userDetails.username,
+          displayName: userDetails.displayName,
+          email: userDetails.email,
+          role: role,
+          groups: userDetails.groups,
+          permissions: permissions
+        }
+      });
     } catch (error) {
+      logger.error('[AUTH] Login error:', error);
       next(error);
     }
   }

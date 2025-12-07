@@ -1,6 +1,7 @@
 const express = require('express');
 const workspaceService = require('../services/workspace');
 const dynamodbService = require('../services/dynamodb');
+const { requirePermission } = require('../middleware/rbac');
 
 const router = express.Router();
 
@@ -79,8 +80,8 @@ router.get('/debug/k8s', async (req, res) => {
   }
 });
 
-// Get all workspaces
-router.get('/', async (req, res, next) => {
+// Get all workspaces (requires workspaces:read permission)
+router.get('/', requirePermission('workspaces', 'read'), async (req, res, next) => {
   try {
     const workspaces = await dynamodbService.getAllWorkspaces();
     res.json({ workspaces });

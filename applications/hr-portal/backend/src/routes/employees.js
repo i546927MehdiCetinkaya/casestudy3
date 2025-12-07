@@ -4,12 +4,13 @@ const { v4: uuidv4 } = require('uuid');
 const dynamodbService = require('../services/dynamodb');
 const workspaceService = require('../services/workspace');
 const directoryService = require('../services/directory');
+const { requirePermission } = require('../middleware/rbac');
 const logger = require('../utils/logger');
 
 const router = express.Router();
 
-// Get all employees
-router.get('/', async (req, res, next) => {
+// Get all employees (requires employees:read permission)
+router.get('/', requirePermission('employees', 'read'), async (req, res, next) => {
   try {
     const { status } = req.query;
     const employees = await dynamodbService.getAllEmployees(status);
@@ -19,8 +20,8 @@ router.get('/', async (req, res, next) => {
   }
 });
 
-// Get employee by ID
-router.get('/:id', async (req, res, next) => {
+// Get employee by ID (requires employees:read permission)
+router.get('/:id', requirePermission('employees', 'read'), async (req, res, next) => {
   try {
     const employee = await dynamodbService.getEmployee(req.params.id);
     if (!employee) {
@@ -42,8 +43,9 @@ router.get('/roles/available', async (req, res, next) => {
   }
 });
 
-// Create new employee (Onboarding)
+// Create new employee (Onboarding) - requires employees:create permission
 router.post('/',
+  requirePermission('employees', 'create'),
   [
     body('firstName').notEmpty().trim(),
     body('lastName').notEmpty().trim(),
@@ -124,8 +126,9 @@ router.post('/',
   }
 );
 
-// Update employee
+// Update employee - requires employees:update permission
 router.put('/:id',
+  requirePermission('employees', 'update'),
   [
     body('firstName').optional().trim(),
     body('lastName').optional().trim(),
@@ -167,7 +170,7 @@ router.put('/:id',
 );
 
 // Delete employee (Offboarding)
-router.delete('/:id', async (req, res, next) => {
+router.delete('/:id', requirePermission('employees', 'delete'), async (req, res, next) => {
   try {
     const employee = await dynamodbService.getEmployee(req.params.id);
     if (!employee) {
