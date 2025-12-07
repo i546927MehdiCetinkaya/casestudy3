@@ -90,8 +90,8 @@ router.get('/', requirePermission('workspaces', 'read'), async (req, res, next) 
   }
 });
 
-// Get workspace by employee ID
-router.get('/employee/:employeeId', async (req, res, next) => {
+// Get workspace by employee ID (requires workspaces:read permission)
+router.get('/employee/:employeeId', requirePermission('workspaces', 'read'), async (req, res, next) => {
   try {
     const workspace = await dynamodbService.getWorkspaceByEmployee(req.params.employeeId);
     if (!workspace) {
@@ -103,8 +103,8 @@ router.get('/employee/:employeeId', async (req, res, next) => {
   }
 });
 
-// Get workspace status
-router.get('/:workspaceId/status', async (req, res, next) => {
+// Get workspace status (requires workspaces:read permission)
+router.get('/:workspaceId/status', requirePermission('workspaces', 'read'), async (req, res, next) => {
   try {
     const status = await workspaceService.getWorkspaceStatus(req.params.workspaceId);
     res.json({ status });
@@ -113,8 +113,8 @@ router.get('/:workspaceId/status', async (req, res, next) => {
   }
 });
 
-// Manually provision workspace
-router.post('/provision/:employeeId', async (req, res, next) => {
+// Manually provision workspace (requires workspaces:create permission)
+router.post('/provision/:employeeId', requirePermission('workspaces', 'create'), async (req, res, next) => {
   try {
     const employee = await dynamodbService.getEmployee(req.params.employeeId);
     if (!employee) {
@@ -135,8 +135,8 @@ router.post('/provision/:employeeId', async (req, res, next) => {
   }
 });
 
-// Manually deprovision workspace
-router.delete('/:employeeId', async (req, res, next) => {
+// Manually deprovision workspace (requires workspaces:delete permission)
+router.delete('/:employeeId', requirePermission('workspaces', 'delete'), async (req, res, next) => {
   try {
     await workspaceService.deprovisionWorkspace(req.params.employeeId);
     res.json({ message: 'Workspace deprovisioned successfully' });
