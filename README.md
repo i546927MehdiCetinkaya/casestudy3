@@ -2,9 +2,10 @@
 
 Automated employee onboarding with Kubernetes-powered containerized workspaces, Zero Trust security, and self-service HR portal on AWS EKS.
 
-[![AWS](https://img.shields.io/badge/AWS-EKS%20%7C%20Cognito%20%7C%20DynamoDB-FF9900? style=flat-square&logo=amazon-aws)](https://aws.amazon.com/eks/)
+[![AWS](https://img.shields.io/badge/AWS-EKS%20%7C%20Cognito%20%7C%20DynamoDB-FF9900?style=flat-square&logo=amazon-aws)](https://aws.amazon.com/eks/)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-v1.27-326CE5?style=flat-square&logo=kubernetes)](https://kubernetes.io/)
 [![Terraform](https://img.shields.io/badge/Terraform-IaC-7B42BC?style=flat-square&logo=terraform)](https://terraform.io/)
+
 
 ---
 
