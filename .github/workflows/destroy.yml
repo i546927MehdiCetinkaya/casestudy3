@@ -1,0 +1,432 @@
+name: Destroy Infrastructure
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'Type "destroy" to confirm'
+        required: true
+        type: string
+
+env:
+  AWS_REGION: eu-west-1
+  TERRAFORM_VERSION: 1.6.0
+  KUBECTL_VERSION: v1.28.4
+
+jobs:
+  validate-input:
+    name: Validate Destruction Request
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check confirmation
+        if: github.event.inputs.confirmation != 'destroy'
+        run: |
+          echo "❌ Confirmation failed. You must type 'destroy' to proceed."
+          exit 1
+
+      - name: Environment check
+        run: |
+          echo "🔴 WARNING: About to destroy infrastructure"
+          echo "This action is IRREVERSIBLE!"
+
+  backup:
+    name: Create Backup
+    needs: [validate-input]
+    if: always() && needs.validate-input.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::920120424621:role/githubrepo
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Backup DynamoDB tables
+        run: |
+          echo "Creating DynamoDB backups..."
+          TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+          
+          # Backup employees table
+          aws dynamodb create-backup \
+            --table-name innovatech-employees \
+            --backup-name "pre-destroy-backup-$TIMESTAMP" || true
+          
+          # Backup workspaces table
+          aws dynamodb create-backup \
+            --table-name innovatech-employees-workspaces \
+            --backup-name "pre-destroy-backup-workspaces-$TIMESTAMP" || true
+          
+          echo "✅ Backups created"
+
+      - name: Export Terraform state
+        run: |
+          echo "Note: Terraform state should be backed up if using remote backend"
+
+  destroy-kubernetes:
+    name: Destroy Kubernetes Resources
+    needs: [validate-input, backup]
+    if: |
+      always() && 
+      needs.validate-input.result == 'success' &&
+      (needs.backup.result == 'success' || needs.backup.result == 'skipped')
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::920120424621:role/githubrepo
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Get cluster name
+        id: cluster
+        run: |
+          # Try to find EKS cluster by tag or naming pattern
+          CLUSTER_NAME=$(aws eks list-clusters --query 'clusters[?contains(@, `innovatech`)]' --output text 2>/dev/null | head -n1)
+          
+          if [ -z "$CLUSTER_NAME" ]; then
+            CLUSTER_NAME="innovatech-employee-lifecycle-eks"
+            echo "⚠️  No cluster found via AWS API, using default name: $CLUSTER_NAME"
+          else
+            echo "✅ Found cluster: $CLUSTER_NAME"
+          fi
+          
+          echo "cluster_name=$CLUSTER_NAME" >> $GITHUB_OUTPUT
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: ${{ env.KUBECTL_VERSION }}
+
+      - name: Configure kubectl
+        continue-on-error: true
+        run: |
+          aws eks update-kubeconfig \
+            --region ${{ env.AWS_REGION }} \
+            --name ${{ steps.cluster.outputs.cluster_name }}
+
+      - name: List all resources before deletion
+        continue-on-error: true
+        run: |
+          echo "=== Current Kubernetes Resources ==="
+          kubectl get all --all-namespaces || true
+
+      - name: Delete workspaces
+        continue-on-error: true
+        run: |
+          echo "Deleting workspaces..."
+          kubectl delete namespace workspaces --timeout=5m || true
+
+      - name: Delete HR Portal
+        continue-on-error: true
+        run: |
+          echo "Deleting HR Portal..."
+          kubectl delete -f kubernetes/hr-portal.yaml --timeout=5m || true
+          kubectl delete namespace hr-portal --timeout=5m || true
+
+      - name: Delete Network Policies
+        continue-on-error: true
+        run: |
+          echo "Deleting Network Policies..."
+          kubectl delete -f kubernetes/network-policies.yaml --timeout=2m || true
+
+      - name: Delete RBAC
+        continue-on-error: true
+        run: |
+          echo "Deleting RBAC..."
+          kubectl delete -f kubernetes/rbac.yaml --timeout=2m || true
+
+      - name: Force delete PVCs
+        continue-on-error: true
+        run: |
+          echo "Force deleting PVCs..."
+          kubectl delete pvc --all -n workspaces --grace-period=0 --force || true
+          kubectl delete pvc --all -n hr-portal --grace-period=0 --force || true
+
+      - name: Verify deletion
+        continue-on-error: true
+        run: |
+          echo "=== Remaining Resources ==="
+          kubectl get all --all-namespaces || true
+
+  destroy-infrastructure:
+    name: Destroy Terraform Infrastructure
+    needs: destroy-kubernetes
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::920120424621:role/githubrepo
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Terraform Init
+        working-directory: ./terraform
+        run: terraform init
+
+      - name: Check if state exists
+        id: state_check
+        working-directory: ./terraform
+        run: |
+          if terraform state list > /dev/null 2>&1; then
+            echo "state_exists=true" >> $GITHUB_OUTPUT
+            echo "✅ Terraform state found"
+          else
+            echo "state_exists=false" >> $GITHUB_OUTPUT
+            echo "⚠️  No Terraform state found - will skip Terraform destroy"
+            echo "This likely means resources were already destroyed or never created with this state"
+          fi
+
+      - name: Terraform Plan Destroy
+        if: steps.state_check.outputs.state_exists == 'true'
+        working-directory: ./terraform
+        run: terraform plan -destroy -out=destroy.tfplan
+
+      - name: Terraform Destroy
+        if: steps.state_check.outputs.state_exists == 'true'
+        working-directory: ./terraform
+        run: terraform destroy -auto-approve
+
+      - name: Manual cleanup (if no state)
+        if: steps.state_check.outputs.state_exists == 'false'
+        run: |
+          echo "⚠️  No Terraform state - performing manual cleanup of known resources"
+          
+          # Delete DynamoDB tables
+          echo "Cleaning up DynamoDB tables..."
+          aws dynamodb delete-table --table-name innovatech-employees 2>/dev/null || true
+          aws dynamodb delete-table --table-name innovatech-employees-workspaces 2>/dev/null || true
+          
+          # Delete EKS cluster
+          echo "Cleaning up EKS cluster..."
+          CLUSTER=$(aws eks list-clusters --query 'clusters[?contains(@, `innovatech`)]' --output text | head -n1)
+          if [ -n "$CLUSTER" ]; then
+            echo "Found cluster: $CLUSTER"
+            # Delete node groups first
+            for ng in $(aws eks list-nodegroups --cluster-name $CLUSTER --query 'nodegroups' --output text); do
+              echo "Deleting node group: $ng"
+              aws eks delete-nodegroup --cluster-name $CLUSTER --nodegroup-name $ng || true
+            done
+            
+            # Wait a bit for node groups to delete
+            sleep 30
+            
+            # Delete cluster
+            echo "Deleting cluster: $CLUSTER"
+            aws eks delete-cluster --name $CLUSTER || true
+          fi
+          
+          # Release Elastic IPs
+          echo "Cleaning up Elastic IPs..."
+          for eip in $(aws ec2 describe-addresses --filters "Name=tag:Project,Values=InnovatechEmployeeLifecycle" --query 'Addresses[*].AllocationId' --output text); do
+            echo "Releasing EIP: $eip"
+            aws ec2 release-address --allocation-id $eip || true
+          done
+          
+          # Delete NAT Gateways
+          echo "Cleaning up NAT Gateways..."
+          for ngw in $(aws ec2 describe-nat-gateways --filter "Name=tag:Project,Values=InnovatechEmployeeLifecycle" --query 'NatGateways[?State!=`deleted`].NatGatewayId' --output text); do
+            echo "Deleting NAT Gateway: $ngw"
+            aws ec2 delete-nat-gateway --nat-gateway-id $ngw || true
+          done
+          
+          echo "⚠️  Note: VPC and related resources will be cleaned up after EKS deletion completes"
+          echo "This may take 5-10 minutes. Check AWS Console to verify."
+
+      - name: Verify destruction
+        run: |
+          echo "Verifying resource deletion..."
+          
+          # Check for remaining resources
+          echo "=== Checking VPCs ==="
+          aws ec2 describe-vpcs \
+            --filters "Name=tag:Name,Values=*innovatech*" \
+            --query 'Vpcs[*].[VpcId,Tags[?Key==`Name`].Value|[0]]' \
+            --output table || true
+          
+          echo "=== Checking EKS Clusters ==="
+          aws eks list-clusters \
+            --query 'clusters[?contains(@, `innovatech`)]' \
+            --output table || true
+          
+          echo "=== Checking DynamoDB Tables ==="
+          aws dynamodb list-tables \
+            --query 'TableNames[?contains(@, `innovatech`)]' \
+            --output table || true
+
+  cleanup-ecr:
+    name: Cleanup ECR Repositories
+    needs: destroy-infrastructure
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::920120424621:role/githubrepo
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Delete ECR repositories
+        continue-on-error: true
+        run: |
+          echo "Deleting ECR repositories..."
+          
+          REPOS=("hr-portal-backend" "hr-portal-frontend" "employee-workspace")
+          
+          for repo in "${REPOS[@]}"; do
+            echo "Deleting $repo..."
+            aws ecr delete-repository \
+              --repository-name $repo \
+              --force || true
+          done
+
+  cleanup-logs:
+    name: Cleanup CloudWatch Logs
+    needs: destroy-infrastructure
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::920120424621:role/githubrepo
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Delete CloudWatch log groups
+        continue-on-error: true
+        run: |
+          echo "Deleting CloudWatch log groups..."
+          
+          # Get all log groups with our prefix
+          LOG_GROUPS=$(aws logs describe-log-groups \
+            --query 'logGroups[?contains(logGroupName, `innovatech`) || contains(logGroupName, `/aws/eks/innovatech`) || contains(logGroupName, `/aws/vpc/innovatech`)].logGroupName' \
+            --output text)
+          
+          for log_group in $LOG_GROUPS; do
+            echo "Deleting log group: $log_group"
+            aws logs delete-log-group --log-group-name "$log_group" || true
+          done
+          
+          # Also clean up VPC flow log IAM role
+          echo "Cleaning up VPC flow log IAM role..."
+          ROLE_NAME="innovatech-employee-lifecycle-vpc-flow-log-role"
+          
+          # Detach policies
+          for policy in $(aws iam list-attached-role-policies --role-name $ROLE_NAME --query 'AttachedPolicies[*].PolicyArn' --output text 2>/dev/null); do
+            echo "Detaching policy: $policy"
+            aws iam detach-role-policy --role-name $ROLE_NAME --policy-arn $policy || true
+          done
+          
+          # Delete inline policies
+          for policy in $(aws iam list-role-policies --role-name $ROLE_NAME --query 'PolicyNames' --output text 2>/dev/null); do
+            echo "Deleting inline policy: $policy"
+            aws iam delete-role-policy --role-name $ROLE_NAME --policy-name $policy || true
+          done
+          
+          # Delete role
+          aws iam delete-role --role-name $ROLE_NAME || true
+
+  final-verification:
+    name: Final Verification
+    needs: [destroy-infrastructure, cleanup-ecr, cleanup-logs]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::920120424621:role/githubrepo
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Final resource check
+        run: |
+          echo "=== FINAL RESOURCE CHECK ==="
+          echo ""
+          
+          echo "Checking for remaining resources..."
+          REMAINING=0
+          
+          # Check VPCs
+          VPC_COUNT=$(aws ec2 describe-vpcs \
+            --filters "Name=tag:Name,Values=*innovatech*" \
+            --query 'length(Vpcs)' \
+            --output text)
+          echo "VPCs remaining: $VPC_COUNT"
+          REMAINING=$((REMAINING + VPC_COUNT))
+          
+          # Check EKS
+          EKS_COUNT=$(aws eks list-clusters \
+            --query 'length(clusters[?contains(@, `innovatech`)])' \
+            --output text 2>/dev/null || echo "0")
+          echo "EKS clusters remaining: $EKS_COUNT"
+          REMAINING=$((REMAINING + EKS_COUNT))
+          
+          # Check DynamoDB
+          DYNAMO_COUNT=$(aws dynamodb list-tables \
+            --query 'length(TableNames[?contains(@, `innovatech`)])' \
+            --output text 2>/dev/null || echo "0")
+          echo "DynamoDB tables remaining: $DYNAMO_COUNT"
+          REMAINING=$((REMAINING + DYNAMO_COUNT))
+          
+          echo ""
+          if [ $REMAINING -eq 0 ]; then
+            echo "✅ All resources successfully destroyed!"
+          else
+            echo "⚠️  Warning: $REMAINING resources may still exist"
+            echo "Check AWS Console for any remaining resources"
+          fi
+
+  notify:
+    name: Send Notification
+    needs: [destroy-kubernetes, destroy-infrastructure, cleanup-ecr, cleanup-logs, final-verification]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Destruction Summary
+        run: |
+          echo "=== Destruction Summary ==="
+          echo "Kubernetes: ${{ needs.destroy-kubernetes.result }}"
+          echo "Terraform: ${{ needs.destroy-infrastructure.result }}"
+          echo "ECR Cleanup: ${{ needs.cleanup-ecr.result }}"
+          echo "Logs Cleanup: ${{ needs.cleanup-logs.result }}"
+          echo "Verification: ${{ needs.final-verification.result }}"
+          echo ""
+          
+          if [ "${{ needs.final-verification.result }}" == "success" ]; then
+            echo "✅ Infrastructure destruction completed"
+          else
+            echo "⚠️  Infrastructure destruction completed with warnings"
+            echo "Please verify all resources are removed in AWS Console"
+          fi

@@ -1,0 +1,58 @@
+name: Deploy HR Portal Backend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'applications/hr-portal/backend/**'
+      - '.github/workflows/deploy-backend.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy-backend:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::920120424621:role/githubrepo
+          role-session-name: github-deploy-backend
+          aws-region: eu-west-1
+      
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      
+      - name: Build Docker image
+        working-directory: applications/hr-portal/backend
+        run: |
+          echo "Building backend Docker image..."
+          docker build -t 920120424621.dkr.ecr.eu-west-1.amazonaws.com/hr-portal-backend:${{ github.sha }} .
+          docker tag 920120424621.dkr.ecr.eu-west-1.amazonaws.com/hr-portal-backend:${{ github.sha }} 920120424621.dkr.ecr.eu-west-1.amazonaws.com/hr-portal-backend:latest
+      
+      - name: Push to ECR
+        run: |
+          echo "Pushing to ECR..."
+          docker push 920120424621.dkr.ecr.eu-west-1.amazonaws.com/hr-portal-backend:${{ github.sha }}
+          docker push 920120424621.dkr.ecr.eu-west-1.amazonaws.com/hr-portal-backend:latest
+      
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --name innovatech-employee-lifecycle --region eu-west-1
+      
+      - name: Restart deployment
+        run: |
+          kubectl rollout restart deployment hr-portal-backend -n hr-portal
+          kubectl rollout status deployment hr-portal-backend -n hr-portal --timeout=5m
+      
+      - name: Verify deployment
+        run: |
+          kubectl get pods -n hr-portal -l app=hr-portal-backend
+          echo "Backend deployed successfully!"

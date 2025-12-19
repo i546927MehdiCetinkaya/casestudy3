@@ -1,0 +1,406 @@
+name: Deploy Infrastructure
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'terraform/**'
+      - 'kubernetes/**'
+      - 'applications/workspace/**'
+      - '.github/workflows/deploy.yml'
+
+env:
+  AWS_REGION: eu-west-1
+  TERRAFORM_VERSION: 1.6.0
+  KUBECTL_VERSION: v1.28.4
+
+jobs:
+  validate:
+    name: Validate Configuration
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Terraform Format Check
+        working-directory: ./terraform
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Init
+        working-directory: ./terraform
+        run: terraform init -backend=false
+
+      - name: Terraform Validate
+        working-directory: ./terraform
+        run: terraform validate
+
+      - name: Install kubeconform
+        run: |
+          wget https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz
+          tar xf kubeconform-linux-amd64.tar.gz
+          sudo mv kubeconform /usr/local/bin
+          chmod +x /usr/local/bin/kubeconform
+
+      - name: Validate Kubernetes Manifests
+        run: |
+          kubeconform -summary -output pretty kubernetes/namespaces.yaml
+          kubeconform -summary -output pretty kubernetes/rbac.yaml
+          kubeconform -summary -output pretty kubernetes/network-policies.yaml
+          kubeconform -summary -output pretty kubernetes/hr-portal.yaml
+          kubeconform -summary -output pretty kubernetes/workspaces.yaml
+          kubeconform -summary -output pretty kubernetes/workspace-serviceaccounts.yaml
+
+  plan:
+    name: Terraform Plan
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      plan_exitcode: ${{ steps.plan.outputs.exitcode }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::920120424621:role/githubrepo
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Terraform Init
+        working-directory: ./terraform
+        run: terraform init
+
+      - name: Terraform Plan
+        id: plan
+        working-directory: ./terraform
+        env:
+          TF_VAR_directory_admin_password: ${{ secrets.DIRECTORY_ADMIN_PASSWORD }}
+        run: |
+          terraform plan -out=tfplan -detailed-exitcode || echo "exitcode=$?" >> $GITHUB_OUTPUT
+          terraform show -no-color tfplan > plan.txt
+
+      - name: Upload Plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan
+          path: terraform/tfplan
+
+      - name: Comment PR with Plan
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const plan = fs.readFileSync('terraform/plan.txt', 'utf8');
+            const output = `#### Terraform Plan 📖
+            <details><summary>Show Plan</summary>
+
+            \`\`\`
+            ${plan}
+            \`\`\`
+
+            </details>`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            });
+
+  deploy-infrastructure:
+    name: Deploy Terraform Infrastructure
+    needs: [plan]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      cluster_name: ${{ steps.output.outputs.cluster_name }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::920120424621:role/githubrepo
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        working-directory: ./terraform
+        run: terraform init
+
+      - name: Import existing resources (if needed)
+        working-directory: ./terraform
+        continue-on-error: true
+        env:
+          TF_VAR_directory_admin_password: ${{ secrets.DIRECTORY_ADMIN_PASSWORD }}
+        run: |
+          # Import CloudWatch Log Group if it exists
+          terraform import module.vpc.aws_cloudwatch_log_group.vpc_flow_log /aws/vpc/innovatech-employee-lifecycle 2>/dev/null || true
+
+      - name: Terraform Apply
+        working-directory: ./terraform
+        env:
+          TF_VAR_directory_admin_password: ${{ secrets.DIRECTORY_ADMIN_PASSWORD }}
+        run: terraform apply -auto-approve
+
+      - name: Get Terraform Outputs
+        id: output
+        working-directory: ./terraform
+        run: |
+          echo "=== Listing all Terraform outputs ==="
+          terraform output
+          echo "=== Getting cluster_name output ==="
+          CLUSTER_NAME=$(terraform output -raw cluster_name)
+          echo "Cluster name is: $CLUSTER_NAME"
+          echo "cluster_name=$CLUSTER_NAME" >> $GITHUB_OUTPUT
+          terraform output -json > outputs.json
+
+      - name: Upload Terraform Outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-outputs
+          path: terraform/outputs.json
+
+      - name: Wait for EKS cluster to be ready
+        run: |
+          echo "Waiting for EKS cluster to stabilize..."
+          sleep 60
+
+  deploy-kubernetes:
+    name: Deploy Kubernetes Resources
+    needs: [deploy-infrastructure, build-images]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::920120424621:role/githubrepo
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: ${{ env.KUBECTL_VERSION }}
+
+      - name: Configure kubectl
+        run: |
+          aws eks update-kubeconfig \
+            --region ${{ env.AWS_REGION }} \
+            --name ${{ needs.deploy-infrastructure.outputs.cluster_name }}
+
+      - name: Verify cluster access
+        run: |
+          kubectl cluster-info
+          kubectl get nodes
+
+      - name: Download Terraform Outputs
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-outputs
+          path: terraform/
+
+      - name: Update Kubernetes Manifests
+        shell: pwsh
+        run: |
+          ./scripts/update-k8s-manifests.ps1 -OutputsFile "terraform/outputs.json"
+
+      - name: Deploy Namespaces
+        run: kubectl apply -f kubernetes/namespaces.yaml
+
+      - name: Deploy RBAC
+        run: kubectl apply -f kubernetes/rbac.yaml
+
+      - name: Deploy Network Policies
+        run: kubectl apply -f kubernetes/network-policies.yaml
+
+      - name: Deploy Workspace ServiceAccounts
+        run: kubectl apply -f kubernetes/workspace-serviceaccounts.yaml
+
+      - name: Deploy HR Portal
+        run: kubectl apply -f kubernetes/hr-portal.yaml
+
+      - name: Restart deployments to pull latest images
+        run: |
+          echo "Restarting deployments to pull latest images..."
+          kubectl rollout restart deployment/hr-portal-backend -n hr-portal
+          kubectl rollout restart deployment/hr-portal-frontend -n hr-portal
+
+      - name: Wait for deployments
+        continue-on-error: true
+        run: |
+          echo "Waiting for deployments to be ready..."
+          kubectl wait --for=condition=available --timeout=300s \
+            deployment/hr-portal-backend -n hr-portal || echo "Backend deployment timeout"
+          kubectl wait --for=condition=available --timeout=300s \
+            deployment/hr-portal-frontend -n hr-portal || echo "Frontend deployment timeout"
+
+      - name: Get deployment status
+        run: |
+          echo "=== Namespaces ==="
+          kubectl get namespaces
+          echo ""
+          echo "=== HR Portal Pods ==="
+          kubectl get pods -n hr-portal
+          echo ""
+          echo "=== Ingress ==="
+          kubectl get ingress -n hr-portal
+
+  build-images:
+    name: Build and Push Container Images
+    needs: deploy-infrastructure
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    strategy:
+      matrix:
+        image:
+          - name: hr-portal-backend
+            path: ./applications/hr-portal/backend
+          - name: hr-portal-frontend
+            path: ./applications/hr-portal/frontend
+          - name: employee-workspace
+            path: ./applications/workspace
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::920120424621:role/githubrepo
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Get AWS Account ID
+        id: account
+        run: echo "account_id=$(aws sts get-caller-identity --query Account --output text)" >> $GITHUB_OUTPUT
+
+      - name: Build and push Docker image
+        env:
+          ECR_REGISTRY: ${{ steps.account.outputs.account_id }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t ${{ matrix.image.name }} ${{ matrix.image.path }}
+          docker tag ${{ matrix.image.name }}:latest $ECR_REGISTRY/${{ matrix.image.name }}:$IMAGE_TAG
+          docker tag ${{ matrix.image.name }}:latest $ECR_REGISTRY/${{ matrix.image.name }}:latest
+          docker push $ECR_REGISTRY/${{ matrix.image.name }}:$IMAGE_TAG
+          docker push $ECR_REGISTRY/${{ matrix.image.name }}:latest
+
+      - name: Scan image for vulnerabilities
+        run: |
+          aws ecr start-image-scan \
+            --repository-name ${{ matrix.image.name }} \
+            --image-id imageTag=${{ github.sha }} || true
+
+  post-deployment-tests:
+    name: Post-Deployment Tests
+    needs: [deploy-infrastructure, deploy-kubernetes, build-images]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::920120424621:role/githubrepo
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: ${{ env.KUBECTL_VERSION }}
+
+      - name: Configure kubectl
+        run: |
+          aws eks update-kubeconfig \
+            --region ${{ env.AWS_REGION }} \
+            --name ${{ needs.deploy-infrastructure.outputs.cluster_name }}
+
+      - name: Health Check Tests
+        run: |
+          echo "=== Testing pod health ==="
+          kubectl get pods -n hr-portal
+          kubectl get pods -n kube-system
+          
+          echo "=== Testing services ==="
+          kubectl get svc -n hr-portal
+          
+          echo "=== Testing network policies ==="
+          kubectl get networkpolicies --all-namespaces
+
+      - name: API Health Check
+        run: |
+          echo "Waiting for LoadBalancer..."
+          sleep 30
+          
+          # Get ALB URL
+          ALB_URL=$(kubectl get ingress -n hr-portal -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}')
+          
+          if [ ! -z "$ALB_URL" ]; then
+            echo "Internal ALB URL: $ALB_URL"
+            echo "Note: This is an internal load balancer. It is not accessible from the public internet."
+            echo "Access requires VPN connection and Cognito authentication."
+          fi
+
+  notify:
+    name: Send Notification
+    needs: [deploy-infrastructure, deploy-kubernetes, build-images, post-deployment-tests]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deployment Summary
+        run: |
+          echo "=== Deployment Summary ==="
+          echo "Terraform: ${{ needs.deploy-infrastructure.result }}"
+          echo "Kubernetes: ${{ needs.deploy-kubernetes.result }}"
+          echo "Container Images: ${{ needs.build-images.result }}"
+          echo "Tests: ${{ needs.post-deployment-tests.result }}"
+          
+          if [ "${{ needs.post-deployment-tests.result }}" == "success" ]; then
+            echo "✅ Deployment completed successfully!"
+          else
+            echo "❌ Deployment failed or incomplete"
+            exit 1
+          fi

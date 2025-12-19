@@ -1,0 +1,58 @@
+name: Deploy HR Portal Frontend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'applications/hr-portal/frontend/**'
+      - '.github/workflows/deploy-frontend.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy-frontend:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::920120424621:role/githubrepo
+          role-session-name: github-deploy-frontend
+          aws-region: eu-west-1
+      
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      
+      - name: Build Docker image
+        working-directory: applications/hr-portal/frontend
+        run: |
+          echo "Building frontend Docker image..."
+          docker build -t 920120424621.dkr.ecr.eu-west-1.amazonaws.com/hr-portal-frontend:${{ github.sha }} .
+          docker tag 920120424621.dkr.ecr.eu-west-1.amazonaws.com/hr-portal-frontend:${{ github.sha }} 920120424621.dkr.ecr.eu-west-1.amazonaws.com/hr-portal-frontend:latest
+      
+      - name: Push to ECR
+        run: |
+          echo "Pushing to ECR..."
+          docker push 920120424621.dkr.ecr.eu-west-1.amazonaws.com/hr-portal-frontend:${{ github.sha }}
+          docker push 920120424621.dkr.ecr.eu-west-1.amazonaws.com/hr-portal-frontend:latest
+      
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --name innovatech-employee-lifecycle --region eu-west-1
+      
+      - name: Restart deployment
+        run: |
+          kubectl rollout restart deployment hr-portal-frontend -n hr-portal
+          kubectl rollout status deployment hr-portal-frontend -n hr-portal --timeout=5m
+      
+      - name: Verify deployment
+        run: |
+          kubectl get pods -n hr-portal -l app=hr-portal-frontend
+          echo "Frontend deployed successfully!"
