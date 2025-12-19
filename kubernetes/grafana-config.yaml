@@ -1,0 +1,202 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: monitoring
+data:
+  prometheus.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus:9090
+        isDefault: true
+        editable: false
+      - name: Loki
+        type: loki
+        access: proxy
+        url: http://loki:3100
+        editable: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-provider
+  namespace: monitoring
+data:
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: 'default'
+        orgId: 1
+        folder: ''
+        type: file
+        disableDeletion: false
+        updateIntervalSeconds: 10
+        allowUiUpdates: true
+        options:
+          path: /var/lib/grafana/dashboards
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-employee-lifecycle
+  namespace: monitoring
+data:
+  employee-lifecycle-dashboard.json: |
+    {
+      "dashboard": {
+        "title": "InnovaTech Employee Lifecycle - Medewerkers Service",
+        "tags": ["employee-lifecycle", "hr-portal", "workspaces"],
+        "timezone": "browser",
+        "panels": [
+          {
+            "id": 1,
+            "title": "HR Portal - Active Users",
+            "type": "stat",
+            "gridPos": {"x": 0, "y": 0, "w": 6, "h": 4},
+            "targets": [{
+              "expr": "sum(rate(http_requests_total{namespace=\"hr-portal\"}[5m]))",
+              "refId": "A"
+            }]
+          },
+          {
+            "id": 2,
+            "title": "AD User Creation Rate",
+            "type": "graph",
+            "gridPos": {"x": 6, "y": 0, "w": 12, "h": 4},
+            "targets": [{
+              "expr": "rate(ad_user_created_total[5m])",
+              "refId": "A",
+              "legendFormat": "Users Created/sec"
+            }]
+          },
+          {
+            "id": 3,
+            "title": "Backend Response Time (p95)",
+            "type": "graph",
+            "gridPos": {"x": 18, "y": 0, "w": 6, "h": 4},
+            "targets": [{
+              "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{namespace=\"hr-portal\",app=\"hr-portal-backend\"}[5m]))",
+              "refId": "A"
+            }]
+          },
+          {
+            "id": 4,
+            "title": "LDAP Connection Status",
+            "type": "stat",
+            "gridPos": {"x": 0, "y": 4, "w": 6, "h": 4},
+            "targets": [{
+              "expr": "ldap_connection_success{namespace=\"hr-portal\"}",
+              "refId": "A"
+            }],
+            "options": {
+              "colorMode": "value",
+              "graphMode": "none",
+              "textMode": "auto"
+            }
+          },
+          {
+            "id": 5,
+            "title": "Active Workspaces by Type",
+            "type": "piechart",
+            "gridPos": {"x": 6, "y": 4, "w": 6, "h": 4},
+            "targets": [{
+              "expr": "count by (workspace_type) (kube_pod_info{namespace=~\"workspace-.*\"})",
+              "refId": "A"
+            }]
+          },
+          {
+            "id": 6,
+            "title": "Pod CPU Usage",
+            "type": "graph",
+            "gridPos": {"x": 12, "y": 4, "w": 12, "h": 4},
+            "targets": [{
+              "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=~\"hr-portal|workspace-.*\"}[5m]))",
+              "refId": "A",
+              "legendFormat": "{{pod}}"
+            }]
+          },
+          {
+            "id": 7,
+            "title": "Backend Logs - Errors",
+            "type": "logs",
+            "gridPos": {"x": 0, "y": 8, "w": 12, "h": 6},
+            "targets": [{
+              "expr": "{namespace=\"hr-portal\",app=\"hr-portal-backend\"} |= \"error\" | json",
+              "refId": "A"
+            }],
+            "datasource": "Loki"
+          },
+          {
+            "id": 8,
+            "title": "AD User Creation Logs",
+            "type": "logs",
+            "gridPos": {"x": 12, "y": 8, "w": 12, "h": 6},
+            "targets": [{
+              "expr": "{namespace=\"hr-portal\",app=\"hr-portal-backend\"} |~ \"Creating AD user|User .* created successfully\"",
+              "refId": "A"
+            }],
+            "datasource": "Loki"
+          },
+          {
+            "id": 9,
+            "title": "HTTP Request Rate by Endpoint",
+            "type": "graph",
+            "gridPos": {"x": 0, "y": 14, "w": 12, "h": 6},
+            "targets": [{
+              "expr": "sum by (path) (rate(http_requests_total{namespace=\"hr-portal\"}[5m]))",
+              "refId": "A",
+              "legendFormat": "{{path}}"
+            }]
+          },
+          {
+            "id": 10,
+            "title": "Directory Service Health",
+            "type": "stat",
+            "gridPos": {"x": 12, "y": 14, "w": 6, "h": 3},
+            "targets": [{
+              "expr": "directory_service_status{directory_id=\"d-936793134f\"}",
+              "refId": "A"
+            }],
+            "options": {
+              "colorMode": "background",
+              "graphMode": "none"
+            }
+          },
+          {
+            "id": 11,
+            "title": "Employee Onboarding Time (avg)",
+            "type": "stat",
+            "gridPos": {"x": 18, "y": 14, "w": 6, "h": 3},
+            "targets": [{
+              "expr": "avg(employee_onboarding_duration_seconds)",
+              "refId": "A"
+            }],
+            "options": {
+              "unit": "s"
+            }
+          },
+          {
+            "id": 12,
+            "title": "Workspace Resource Usage",
+            "type": "graph",
+            "gridPos": {"x": 0, "y": 20, "w": 24, "h": 6},
+            "targets": [{
+              "expr": "sum by (namespace) (container_memory_usage_bytes{namespace=~\"workspace-.*\"})",
+              "refId": "A",
+              "legendFormat": "{{namespace}} - Memory"
+            }, {
+              "expr": "sum by (namespace) (rate(container_cpu_usage_seconds_total{namespace=~\"workspace-.*\"}[5m])) * 100",
+              "refId": "B",
+              "legendFormat": "{{namespace}} - CPU %"
+            }]
+          }
+        ],
+        "refresh": "10s",
+        "schemaVersion": 27,
+        "version": 1
+      },
+      "overwrite": true
+    }

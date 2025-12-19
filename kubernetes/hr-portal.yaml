@@ -1,0 +1,263 @@
+# Service Account for HR Portal Backend with IRSA
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: hr-portal-backend
+  namespace: hr-portal
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::920120424621:role/innovatech-employee-lifecycle-hr-portal-role"
+---
+# ConfigMap for HR Portal Backend
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hr-portal-config
+  namespace: hr-portal
+data:
+  DYNAMODB_TABLE: "innovatech-employees"
+  DYNAMODB_WORKSPACES_TABLE: "innovatech-employees-workspaces"
+  AWS_REGION: "eu-west-1"
+  NODE_ENV: "production"
+  CLUSTER_NAME: "innovatech-employee-lifecycle"
+---
+# ConfigMap for Active Directory configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ad-config
+  namespace: hr-portal
+data:
+  AD_ENABLED: "true"
+  AD_DOMAIN: "innovatech.local"
+  AD_BASE_DN: "DC=innovatech,DC=local"
+  AD_BIND_DN: "CN=Administrator,CN=Users,DC=innovatech,DC=local"
+  AD_TIMEOUT: "10000"
+---
+# Secret for HR Portal (placeholder - use AWS Secrets Manager in production)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: hr-portal-secrets
+  namespace: hr-portal
+type: Opaque
+data:
+  # Base64 encoded values
+  JWT_SECRET: c2VjdXJlLWp3dC1zZWNyZXQtY2hhbmdlLW1l
+---
+# Deployment for HR Portal Backend
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hr-portal-backend
+  namespace: hr-portal
+  labels:
+    app: hr-portal-backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hr-portal-backend
+  template:
+    metadata:
+      labels:
+        app: hr-portal-backend
+    spec:
+      serviceAccountName: hr-portal-backend
+      containers:
+      - name: backend
+        image: 920120424621.dkr.ecr.eu-west-1.amazonaws.com/hr-portal-backend:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 3000
+          name: http
+        envFrom:
+        - configMapRef:
+            name: hr-portal-config
+        - secretRef:
+            name: hr-portal-secrets
+        - secretRef:
+            name: ad-credentials
+        - configMapRef:
+            name: ad-config
+        env:
+        - name: ROUTE53_HOSTED_ZONE_ID
+          value: "Z08196523SO8TX1YTHO1W"
+        - name: ROUTE53_DOMAIN
+          value: "innovatech.local"
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "250m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1001
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+---
+# Service for HR Portal Backend
+apiVersion: v1
+kind: Service
+metadata:
+  name: hr-portal-backend
+  namespace: hr-portal
+spec:
+  selector:
+    app: hr-portal-backend
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 3000
+    nodePort: 30081
+  type: NodePort
+---
+# Deployment for HR Portal Frontend
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hr-portal-frontend
+  namespace: hr-portal
+  labels:
+    app: hr-portal-frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: hr-portal-frontend
+  template:
+    metadata:
+      labels:
+        app: hr-portal-frontend
+    spec:
+      containers:
+      - name: frontend
+        image: 920120424621.dkr.ecr.eu-west-1.amazonaws.com/hr-portal-frontend:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+          name: http
+        env:
+        - name: REACT_APP_API_URL
+          value: "http://hr-portal-backend"
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: nginx-cache
+          mountPath: /var/cache/nginx
+        - name: nginx-run
+          mountPath: /var/run
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 101
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      - name: nginx-cache
+        emptyDir: {}
+      - name: nginx-run
+        emptyDir: {}
+---
+# Service for HR Portal Frontend (NodePort for DNS access via VPN)
+apiVersion: v1
+kind: Service
+metadata:
+  name: hr-portal-frontend
+  namespace: hr-portal
+spec:
+  selector:
+    app: hr-portal-frontend
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 8080
+    nodePort: 30080
+  type: NodePort
+---
+# Internal Ingress for HR Portal (Only accessible within corporate network)
+# Requires AWS Load Balancer Controller and corporate VPN/DirectConnect
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: hr-portal
+  namespace: hr-portal
+  annotations:
+    # INTERNAL load balancer - only accessible within VPC
+    alb.ingress.kubernetes.io/scheme: internal
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+    # SSL/TLS Configuration (required for production)
+    alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:eu-west-1:920120424621:certificate/YOUR-CERT-ID"
+    alb.ingress.kubernetes.io/ssl-policy: "ELBSecurityPolicy-TLS13-1-2-2021-06"
+    # Security Group - restrict to corporate IP ranges only
+    alb.ingress.kubernetes.io/security-groups: "hr-portal-internal-alb-sg"
+    alb.ingress.kubernetes.io/inbound-cidrs: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+    # Authentication via AWS Cognito (HR users only)
+    alb.ingress.kubernetes.io/auth-type: cognito
+    alb.ingress.kubernetes.io/auth-idp-cognito: '{"userPoolArn":"arn:aws:cognito-idp:eu-west-1:920120424621:userpool/YOUR-USER-POOL-ID","userPoolClientId":"YOUR-CLIENT-ID","userPoolDomain":"YOUR-DOMAIN"}'
+    alb.ingress.kubernetes.io/auth-scope: "openid email profile"
+    alb.ingress.kubernetes.io/auth-session-cookie: "AWSELBAuthSessionCookie"
+    alb.ingress.kubernetes.io/auth-session-timeout: "3600"
+    alb.ingress.kubernetes.io/auth-on-unauthenticated-request: authenticate
+spec:
+  ingressClassName: alb
+  rules:
+  - host: hr-portal.internal.innovatech.local
+    http:
+      paths:
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: hr-portal-backend
+            port:
+              number: 80
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: hr-portal-frontend
+            port:
+              number: 80

@@ -1,0 +1,286 @@
+# =============================================================================
+# WORKSPACES CONFIGURATION - ZERO TRUST ARCHITECTURE
+# Each workspace is PRIVATE and only accessible by the owner (employee)
+# =============================================================================
+
+# Service Account for Workspace Provisioner
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: workspace-provisioner
+  namespace: workspaces
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::920120424621:role/innovatech-employee-lifecycle-workspace-role"
+---
+# StorageClass for Workspace Persistent Volumes (Encrypted)
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: workspace-storage
+provisioner: ebs.csi.aws.com
+parameters:
+  type: gp3
+  encrypted: "true"
+  # KMS key for encryption (optional - uses AWS managed key if not specified)
+  # kmsKeyId: "arn:aws:kms:eu-west-1:920120424621:key/YOUR-KMS-KEY-ID"
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+---
+# RoleBinding for HR Portal to manage workspaces namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: hr-portal-workspace-manager
+  namespace: workspaces
+subjects:
+- kind: ServiceAccount
+  name: hr-portal-backend
+  namespace: hr-portal
+roleRef:
+  kind: ClusterRole
+  name: workspace-provisioner
+  apiGroup: rbac.authorization.k8s.io
+---
+# =============================================================================
+# WORKSPACE POD TEMPLATE - PRIVATE ACCESS ONLY
+# This is a template - actual workspaces are created dynamically by HR Portal
+# =============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: workspace-template
+  namespace: workspaces
+data:
+  # Template for workspace deployment - used by HR Portal backend
+  deployment-template.yaml: |
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: workspace-${EMPLOYEE_ID}
+      namespace: workspaces
+      labels:
+        app: workspace
+        employee-id: "${EMPLOYEE_ID}"
+        department: "${DEPARTMENT}"
+        workspace-owner: "${USERNAME}"
+    spec:
+      replicas: 1
+      selector:
+        matchLabels:
+          app: workspace
+          employee-id: "${EMPLOYEE_ID}"
+      template:
+        metadata:
+          labels:
+            app: workspace
+            employee-id: "${EMPLOYEE_ID}"
+            department: "${DEPARTMENT}"
+            workspace-owner: "${USERNAME}"
+          annotations:
+            # Zero Trust: Only owner can access
+            workspace.innovatech.io/owner: "${USERNAME}"
+            workspace.innovatech.io/employee-id: "${EMPLOYEE_ID}"
+        spec:
+          serviceAccountName: workspace-${EMPLOYEE_ID}
+          automountServiceAccountToken: false
+          containers:
+          - name: workspace
+            image: 920120424621.dkr.ecr.eu-west-1.amazonaws.com/employee-workspace:latest
+            imagePullPolicy: Always
+            ports:
+            - containerPort: 8080
+              name: http
+            env:
+            - name: WORKSPACE_OWNER
+              value: "${USERNAME}"
+            - name: EMPLOYEE_ID
+              value: "${EMPLOYEE_ID}"
+            - name: DEPARTMENT
+              value: "${DEPARTMENT}"
+            resources:
+              requests:
+                memory: "512Mi"
+                cpu: "500m"
+              limits:
+                memory: "2Gi"
+                cpu: "2000m"
+            securityContext:
+              runAsNonRoot: true
+              runAsUser: 1000
+              runAsGroup: 1000
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: false
+              capabilities:
+                drop:
+                - ALL
+            volumeMounts:
+            - name: workspace-data
+              mountPath: /home/developer
+            - name: tmp
+              mountPath: /tmp
+          volumes:
+          - name: workspace-data
+            persistentVolumeClaim:
+              claimName: workspace-${EMPLOYEE_ID}-pvc
+          - name: tmp
+            emptyDir: {}
+          # Security: Prevent privilege escalation
+          securityContext:
+            fsGroup: 1000
+            seccompProfile:
+              type: RuntimeDefault
+  
+  # Service template - ClusterIP only (internal)
+  service-template.yaml: |
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: workspace-${EMPLOYEE_ID}
+      namespace: workspaces
+      labels:
+        app: workspace
+        employee-id: "${EMPLOYEE_ID}"
+    spec:
+      selector:
+        app: workspace
+        employee-id: "${EMPLOYEE_ID}"
+      ports:
+      - protocol: TCP
+        port: 80
+        targetPort: 8080
+      type: ClusterIP
+
+  # PVC template for workspace storage
+  pvc-template.yaml: |
+    apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: workspace-${EMPLOYEE_ID}-pvc
+      namespace: workspaces
+      labels:
+        app: workspace
+        employee-id: "${EMPLOYEE_ID}"
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      storageClassName: workspace-storage
+      resources:
+        requests:
+          storage: 20Gi
+
+  # ServiceAccount template per workspace
+  serviceaccount-template.yaml: |
+    apiVersion: v1
+    kind: ServiceAccount
+    metadata:
+      name: workspace-${EMPLOYEE_ID}
+      namespace: workspaces
+      labels:
+        app: workspace
+        employee-id: "${EMPLOYEE_ID}"
+
+  # NetworkPolicy template - ZERO TRUST: Only owner can access
+  networkpolicy-template.yaml: |
+    apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: workspace-${EMPLOYEE_ID}-isolation
+      namespace: workspaces
+      labels:
+        app: workspace
+        employee-id: "${EMPLOYEE_ID}"
+    spec:
+      podSelector:
+        matchLabels:
+          employee-id: "${EMPLOYEE_ID}"
+      policyTypes:
+      - Ingress
+      - Egress
+      ingress:
+      # Only allow from internal ALB (authenticated via Cognito)
+      - from:
+        - namespaceSelector:
+            matchLabels:
+              name: kube-system
+        - ipBlock:
+            cidr: 10.0.0.0/8
+        ports:
+        - protocol: TCP
+          port: 8080
+      egress:
+      # Allow DNS
+      - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+        ports:
+        - protocol: UDP
+          port: 53
+      # Allow HTTPS to AWS services (via VPC endpoints)
+      - to:
+        - ipBlock:
+            cidr: 10.0.0.0/8
+        ports:
+        - protocol: TCP
+          port: 443
+---
+# =============================================================================
+# INTERNAL INGRESS FOR WORKSPACES - PRIVATE ACCESS ONLY
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: workspace-ingress
+  namespace: workspaces
+  annotations:
+    # INTERNAL load balancer only
+    alb.ingress.kubernetes.io/scheme: internal
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+    # SSL Configuration
+    alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:eu-west-1:920120424621:certificate/YOUR-CERT-ID"
+    alb.ingress.kubernetes.io/ssl-policy: "ELBSecurityPolicy-TLS13-1-2-2021-06"
+    # Security Group - internal only
+    alb.ingress.kubernetes.io/security-groups: "workspace-internal-alb-sg"
+    alb.ingress.kubernetes.io/inbound-cidrs: "10.0.0.0/8"
+    # Cognito Authentication - REQUIRED
+    alb.ingress.kubernetes.io/auth-type: cognito
+    alb.ingress.kubernetes.io/auth-idp-cognito: '{"userPoolArn":"arn:aws:cognito-idp:eu-west-1:920120424621:userpool/YOUR-USER-POOL-ID","userPoolClientId":"YOUR-WORKSPACE-CLIENT-ID","userPoolDomain":"innovatech-employee-lifecycle-auth"}'
+    alb.ingress.kubernetes.io/auth-scope: "openid email profile"
+    alb.ingress.kubernetes.io/auth-on-unauthenticated-request: authenticate
+    # Session configuration
+    alb.ingress.kubernetes.io/auth-session-cookie: "AWSELBAuthSessionCookie"
+    alb.ingress.kubernetes.io/auth-session-timeout: "28800"
+spec:
+  ingressClassName: alb
+  rules:
+  - host: workspace.internal.innovatech.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: workspace-router
+            port:
+              number: 80
+---
+# =============================================================================
+# WORKSPACE ROUTER SERVICE
+# Routes requests to the correct workspace based on authenticated user
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: workspace-router
+  namespace: workspaces
+spec:
+  selector:
+    app: workspace-router
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 8080
+  type: ClusterIP

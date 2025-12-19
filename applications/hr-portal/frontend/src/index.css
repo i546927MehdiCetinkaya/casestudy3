@@ -1,0 +1,59 @@
+:root {
+  --bg-primary: #0f172a;    /* Slate-950 */
+  --bg-secondary: #1e293b;  /* Slate-800 */
+  --bg-card: #1e293b;      /* Slate-800 */
+  --accent-primary: #6366f1; /* Indigo-500 */
+  --accent-secondary: #8b5cf6; /* Violet-500 */
+  --text-primary: #f1f5f9;  /* Slate-100 */
+  --text-secondary: #94a3b8; /* Slate-400 */
+  --border-color: #334155;  /* Slate-700 */
+  --success: #10b981;       /* Emerald-500 */
+  --danger: #ef4444;        /* Red-500 */
+  --warning: #f59e0b;       /* Amber-500 */
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  min-height: 100vh;
+  selection: color-mix(in srgb, var(--accent-primary) 30%, transparent);
+}
+
+code {
+  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
+    monospace;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+/* Custom scrollbar for webkit browsers */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-primary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #475569; /* Slate-600 */
+}

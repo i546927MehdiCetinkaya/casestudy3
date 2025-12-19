@@ -1,0 +1,78 @@
+# Terraform
+**/*.tfstate
+**/*.tfstate.*
+**/.terraform/
+**/.terraform.lock.hcl
+**/tfplan
+**/crash.log
+**/override.tf
+**/override.tf.json
+**/*_override.tf
+**/*_override.tf.json
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+.eslintcache
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Docker
+**/*.log
+**/Dockerfile.dev
+
+# Kubernetes
+**/kubeconfig
+**/*.kubeconfig
+
+# Secrets (never commit!)
+**/secrets.yaml
+**/secret-*.yaml
+**/*-secret.yaml
+
+# Temporary files
+*.tmp
+*.bak
+*.backup
+temp-outputs/
+delete-key.json
+ssm-fix.json
+*-fix.json
+
+# AWS
+.aws/
+credentials
+config
+
+# Build artifacts
+dist/
+build/
+*.tar.gz
+*.zip
+
+# Test results
+test-results/
+coverage/
+
+# Logs
+logs/
+*.log
+
+# OS
+Thumbs.db
+Desktop.ini
+*.tar

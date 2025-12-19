@@ -1,0 +1,47 @@
+# =============================================================================
+# Core Configuration
+# =============================================================================
+cluster_name = "innovatech-employee-lifecycle"
+environment  = "production"
+aws_region   = "eu-west-1"
+
+# =============================================================================
+# Network Configuration
+# =============================================================================
+vpc_cidr = "10.0.0.0/16"
+
+# =============================================================================
+# Domain Configuration - Changed to innovatech.local for Route53 private zone
+# =============================================================================
+domain_name = "innovatech.local"
+
+# =============================================================================
+# OpenVPN Configuration (Professional DNS Solution)
+# Will push VPC DNS (10.0.0.2) to clients for Route53 private zone resolution
+# =============================================================================
+enable_openvpn         = true
+openvpn_key_name       = "bastion-key"  # Create this SSH key in AWS first!
+openvpn_instance_type  = "t3.small"
+openvpn_admin_password = "CHANGE_ME_BEFORE_DEPLOY"  # ⚠️ Use a strong password!
+
+# =============================================================================
+# AWS Directory Service Configuration
+# =============================================================================
+directory_admin_password = "CHANGE_ME_BEFORE_DEPLOY"  # ⚠️ Use a strong password!
+
+# =============================================================================
+# EKS Configuration
+# =============================================================================
+node_instance_types = ["t3.medium"]
+node_desired_size   = 3
+node_min_size       = 2
+node_max_size       = 5
+
+# =============================================================================
+# Tags (Optional)
+# =============================================================================
+tags = {
+  Project     = "InnovaTech Employee Lifecycle"
+  ManagedBy   = "Terraform"
+  Environment = "Production"
+}

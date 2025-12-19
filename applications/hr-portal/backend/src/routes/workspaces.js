@@ -1,0 +1,427 @@
+const express = require('express');
+const workspaceService = require('../services/workspace');
+const dynamodbService = require('../services/dynamodb');
+const { requirePermission } = require('../middleware/rbac');
+
+const router = express.Router();
+
+// Debug endpoint to test K8s connectivity
+router.get('/debug/k8s', async (req, res) => {
+  try {
+    const k8s = require('@kubernetes/client-node');
+    const kc = new k8s.KubeConfig();
+    
+    let config = 'none';
+    let error = null;
+    let clusterInfo = null;
+    
+    try {
+      kc.loadFromCluster();
+      config = 'in-cluster';
+      clusterInfo = {
+        cluster: kc.getCurrentCluster(),
+        user: kc.getCurrentUser()
+      };
+    } catch (e1) {
+      try {
+        kc.loadFromDefault();
+        config = 'default';
+      } catch (e2) {
+        error = `in-cluster: ${e1.message}, default: ${e2.message}`;
+      }
+    }
+    
+    if (config !== 'none') {
+      const k8sApi = kc.makeApiClient(k8s.CoreV1Api);
+      try {
+        // Get pods with full status
+        const pods = await k8sApi.listNamespacedPod('workspaces');
+        const podDetails = pods.body.items.map(p => ({
+          name: p.metadata.name,
+          phase: p.status.phase,
+          conditions: p.status.conditions,
+          containerStatuses: p.status.containerStatuses
+        }));
+        
+        // Get services with LoadBalancer info
+        const services = await k8sApi.listNamespacedService('workspaces');
+        const serviceDetails = services.body.items.map(s => ({
+          name: s.metadata.name,
+          type: s.spec.type,
+          loadBalancer: s.status.loadBalancer,
+          ports: s.spec.ports
+        }));
+        
+        res.json({
+          status: 'connected',
+          config,
+          podCount: pods.body.items.length,
+          pods: podDetails,
+          services: serviceDetails
+        });
+      } catch (apiError) {
+        res.json({
+          status: 'config-loaded',
+          config,
+          clusterInfo,
+          apiError: apiError.message,
+          apiErrorBody: apiError.body,
+          apiErrorStatusCode: apiError.statusCode
+        });
+      }
+    } else {
+      res.json({
+        status: 'no-config',
+        error
+      });
+    }
+  } catch (error) {
+    res.status(500).json({ error: error.message, stack: error.stack });
+  }
+});
+
+// Get all workspaces (requires workspaces:read permission)
+router.get('/', requirePermission('workspaces', 'read'), async (req, res, next) => {
+  try {
+    const workspaces = await dynamodbService.getAllWorkspaces();
+    res.json({ workspaces });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Get workspace by employee ID (requires workspaces:read permission)
+router.get('/employee/:employeeId', requirePermission('workspaces', 'read'), async (req, res, next) => {
+  try {
+    const workspace = await dynamodbService.getWorkspaceByEmployee(req.params.employeeId);
+    if (!workspace) {
+      return res.status(404).json({ error: 'Workspace not found' });
+    }
+    res.json({ workspace });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Get workspace status (requires workspaces:read permission)
+router.get('/:workspaceId/status', requirePermission('workspaces', 'read'), async (req, res, next) => {
+  try {
+    const status = await workspaceService.getWorkspaceStatus(req.params.workspaceId);
+    res.json({ status });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Manually provision workspace (requires workspaces:create permission)
+router.post('/provision/:employeeId', requirePermission('workspaces', 'create'), async (req, res, next) => {
+  try {
+    const employee = await dynamodbService.getEmployee(req.params.employeeId);
+    if (!employee) {
+      return res.status(404).json({ error: 'Employee not found' });
+    }
+
+    const workspace = await workspaceService.provisionWorkspace(employee);
+    
+    // Indicate if this is a mock workspace
+    const response = { workspace };
+    if (workspace.mock) {
+      response.warning = 'Workspace was created using mock provisioning (Kubernetes unavailable)';
+    }
+    
+    res.status(201).json(response);
+  } catch (error) {
+    console.error('Provision error:', error);
+    
+    // User-friendly error messages
+    let userMessage = error.message;
+    if (error.message.includes('timeout')) {
+      userMessage = 'Workspace provisioning timed out. The Kubernetes cluster may be unreachable. Please contact IT support.';
+    } else if (error.message.includes('ECONNREFUSED') || error.message.includes('ETIMEDOUT')) {
+      userMessage = 'Cannot connect to Kubernetes cluster. Please contact IT support.';
+    } else if (error.message.includes('already has an active workspace')) {
+      userMessage = error.message;
+    }
+    
+    res.status(500).json({ 
+      error: userMessage,
+      details: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Manually deprovision workspace (requires workspaces:delete permission)
+router.delete('/:employeeId', requirePermission('workspaces', 'delete'), async (req, res, next) => {
+  try {
+    await workspaceService.deprovisionWorkspace(req.params.employeeId);
+    res.json({ message: 'Workspace deprovisioned successfully' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Force cleanup a workspace by name (debug)
+router.delete('/debug/cleanup/:name', async (req, res) => {
+  try {
+    const k8s = require('@kubernetes/client-node');
+    const kc = new k8s.KubeConfig();
+    kc.loadFromCluster();
+    const k8sApi = kc.makeApiClient(k8s.CoreV1Api);
+    
+    const name = req.params.name;
+    const results = [];
+    
+    // Delete pod
+    try {
+      await k8sApi.deleteNamespacedPod(name, 'workspaces');
+      results.push(`Pod ${name} deleted`);
+    } catch (e) { results.push(`Pod: ${e.message}`); }
+    
+    // Delete service
+    try {
+      await k8sApi.deleteNamespacedService(name, 'workspaces');
+      results.push(`Service ${name} deleted`);
+    } catch (e) { results.push(`Service: ${e.message}`); }
+    
+    // Delete secret
+    try {
+      await k8sApi.deleteNamespacedSecret(`${name}-secret`, 'workspaces');
+      results.push(`Secret ${name}-secret deleted`);
+    } catch (e) { results.push(`Secret: ${e.message}`); }
+    
+    // Delete PVC
+    try {
+      await k8sApi.deleteNamespacedPersistentVolumeClaim(`${name}-pvc`, 'workspaces');
+      results.push(`PVC ${name}-pvc deleted`);
+    } catch (e) { results.push(`PVC: ${e.message}`); }
+    
+    res.json({ results });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Sync DynamoDB with K8s - remove stale entries and update URLs/passwords
+router.post('/debug/sync', async (req, res) => {
+  try {
+    const k8s = require('@kubernetes/client-node');
+    const kc = new k8s.KubeConfig();
+    kc.loadFromCluster();
+    const k8sApi = kc.makeApiClient(k8s.CoreV1Api);
+    
+    // Get running pods
+    const pods = await k8sApi.listNamespacedPod('workspaces');
+    const runningPodNames = new Set(pods.body.items.map(p => p.metadata.name));
+    
+    // Get services with LoadBalancer URLs
+    const services = await k8sApi.listNamespacedService('workspaces');
+    const serviceUrls = {};
+    for (const svc of services.body.items) {
+      if (svc.status.loadBalancer && svc.status.loadBalancer.ingress && svc.status.loadBalancer.ingress[0]) {
+        const hostname = svc.status.loadBalancer.ingress[0].hostname;
+        serviceUrls[svc.metadata.name] = `http://${hostname}`;
+      }
+    }
+    
+    // Get secrets with passwords
+    const secretPasswords = {};
+    for (const podName of runningPodNames) {
+      try {
+        const secret = await k8sApi.readNamespacedSecret(`${podName}-secret`, 'workspaces');
+        if (secret.body.data) {
+          // Try vnc-password first, then password
+          const pwdData = secret.body.data['vnc-password'] || secret.body.data['password'];
+          if (pwdData) {
+            secretPasswords[podName] = Buffer.from(pwdData, 'base64').toString();
+          }
+        }
+      } catch (e) {
+        // Secret might not exist
+      }
+    }
+    
+    // Get all workspaces from DynamoDB
+    const workspaces = await dynamodbService.getAllWorkspaces();
+    
+    const results = {
+      checked: workspaces.length,
+      deleted: [],
+      kept: [],
+      updated: []
+    };
+    
+    // Group workspaces by employeeId
+    const byEmployee = {};
+    for (const ws of workspaces) {
+      if (!byEmployee[ws.employeeId]) {
+        byEmployee[ws.employeeId] = [];
+      }
+      byEmployee[ws.employeeId].push(ws);
+    }
+    
+    // For each employee, keep only the workspace that matches a running service
+    for (const employeeId of Object.keys(byEmployee)) {
+      const employeeWorkspaces = byEmployee[employeeId];
+      let foundMatch = false;
+      
+      for (const ws of employeeWorkspaces) {
+        if (runningPodNames.has(ws.name) && !foundMatch) {
+          // First matching workspace for this employee - keep it
+          foundMatch = true;
+          
+          const serviceUrl = serviceUrls[ws.name];
+          const secretPassword = secretPasswords[ws.name];
+          
+          // Check what needs updating
+          const updates = {};
+          if (ws.status !== 'active') {
+            updates.status = 'active';
+          }
+          if (serviceUrl && ws.url !== serviceUrl) {
+            updates.url = serviceUrl;
+          }
+          if (secretPassword && ws.credentials?.password !== secretPassword) {
+            updates.credentials = {
+              username: 'coder',
+              password: secretPassword
+            };
+          }
+          
+          if (Object.keys(updates).length > 0) {
+            await dynamodbService.updateWorkspace(ws.workspaceId, updates);
+            results.updated.push({ name: ws.name, workspaceId: ws.workspaceId, updates: Object.keys(updates) });
+          }
+          results.kept.push({ name: ws.name, workspaceId: ws.workspaceId });
+        } else {
+          // Either pod doesn't exist, or we already kept one for this employee
+          await dynamodbService.deleteWorkspace(ws.workspaceId);
+          results.deleted.push({ name: ws.name, workspaceId: ws.workspaceId, reason: foundMatch ? 'duplicate' : 'no-pod' });
+        }
+      }
+    }
+    
+    res.json(results);
+  } catch (error) {
+    res.status(500).json({ error: error.message, stack: error.stack });
+  }
+});
+
+// Delete workspace by workspaceId from DynamoDB only
+router.delete('/debug/db/:workspaceId', async (req, res) => {
+  try {
+    await dynamodbService.deleteWorkspace(req.params.workspaceId);
+    res.json({ message: 'Deleted from DynamoDB' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Register a workspace manually (for fixing missing entries)
+router.post('/debug/register', async (req, res) => {
+  try {
+    const { employeeId, name, url, password } = req.body;
+    
+    if (!employeeId || !name || !url || !password) {
+      return res.status(400).json({ error: 'Missing required fields: employeeId, name, url, password' });
+    }
+    
+    const workspace = {
+      workspaceId: require('uuid').v4(),
+      employeeId,
+      name,
+      url,
+      status: 'active',
+      createdAt: new Date().toISOString(),
+      credentials: {
+        username: 'coder',
+        password
+      }
+    };
+    
+    await dynamodbService.createWorkspace(workspace);
+    res.json({ message: 'Workspace registered', workspace });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Rebuild workspace entries from K8s state
+router.post('/debug/rebuild', async (req, res) => {
+  try {
+    const k8s = require('@kubernetes/client-node');
+    const kc = new k8s.KubeConfig();
+    kc.loadFromCluster();
+    const k8sApi = kc.makeApiClient(k8s.CoreV1Api);
+    
+    // Get running pods with their labels (to get employeeId)
+    const pods = await k8sApi.listNamespacedPod('workspaces');
+    
+    // Get services with LoadBalancer URLs
+    const services = await k8sApi.listNamespacedService('workspaces');
+    const serviceUrls = {};
+    for (const svc of services.body.items) {
+      if (svc.status.loadBalancer && svc.status.loadBalancer.ingress && svc.status.loadBalancer.ingress[0]) {
+        const hostname = svc.status.loadBalancer.ingress[0].hostname;
+        serviceUrls[svc.metadata.name] = `http://${hostname}`;
+      }
+    }
+    
+    // Clear all existing workspaces from DynamoDB
+    const existingWorkspaces = await dynamodbService.getAllWorkspaces();
+    for (const ws of existingWorkspaces) {
+      await dynamodbService.deleteWorkspace(ws.workspaceId);
+    }
+    
+    const results = { created: [], errors: [] };
+    
+    for (const pod of pods.body.items) {
+      const name = pod.metadata.name;
+      const employeeId = pod.metadata.labels?.employeeId;
+      
+      if (!employeeId) {
+        results.errors.push({ name, error: 'No employeeId label' });
+        continue;
+      }
+      
+      // Get the secret for this workspace
+      let password = 'unknown';
+      try {
+        const secret = await k8sApi.readNamespacedSecret(`${name}-secret`, 'workspaces');
+        // Try vnc-password first, then password
+        if (secret.body.data['vnc-password']) {
+          password = Buffer.from(secret.body.data['vnc-password'], 'base64').toString();
+        } else if (secret.body.data['password']) {
+          password = Buffer.from(secret.body.data['password'], 'base64').toString();
+        }
+      } catch (e) {
+        results.errors.push({ name, error: `Secret error: ${e.message}` });
+      }
+      
+      const url = serviceUrls[name] || 'unknown';
+      
+      // Create workspace entry
+      const workspace = {
+        workspaceId: require('uuid').v4(),
+        employeeId,
+        name,
+        url,
+        status: 'active',
+        createdAt: new Date().toISOString(),
+        credentials: {
+          username: 'coder',
+          password
+        }
+      };
+      
+      await dynamodbService.createWorkspace(workspace);
+      results.created.push({ name, employeeId, url });
+    }
+    
+    res.json(results);
+  } catch (error) {
+    res.status(500).json({ error: error.message, stack: error.stack });
+  }
+});
+
+module.exports = router;

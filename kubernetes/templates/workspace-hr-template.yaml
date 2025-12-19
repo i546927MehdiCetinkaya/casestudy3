@@ -1,0 +1,153 @@
+# Workspace Pod Template for HR Department
+apiVersion: v1
+kind: Pod
+metadata:
+  name: workspace-${EMPLOYEE_ID}
+  namespace: workspaces
+  labels:
+    app: workspace
+    department: hr
+    employee: "${EMPLOYEE_ID}"
+    type: kasm-workspace
+  annotations:
+    description: "HR workspace for employee ${EMPLOYEE_ID}"
+spec:
+  serviceAccountName: workspace-user
+  securityContext:
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+  containers:
+  - name: workspace
+    image: ${ECR_REGISTRY}/workspace-hr:latest
+    imagePullPolicy: Always
+    ports:
+    - name: vnc
+      containerPort: 6901
+      protocol: TCP
+    - name: web
+      containerPort: 443
+      protocol: TCP
+    env:
+    - name: EMPLOYEE_ID
+      value: "${EMPLOYEE_ID}"
+    - name: EMPLOYEE_EMAIL
+      value: "${EMPLOYEE_EMAIL}"
+    - name: DEPARTMENT
+      value: "hr"
+    - name: AD_DOMAIN
+      value: "innovatech.local"
+    - name: VNC_PW
+      valueFrom:
+        secretKeyRef:
+          name: workspace-${EMPLOYEE_ID}-secret
+          key: vnc-password
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "1Gi"
+      limits:
+        cpu: "1500m"
+        memory: "3Gi"
+    volumeMounts:
+    - name: workspace-data
+      mountPath: /home/kasm-user/workspace
+    - name: documents
+      mountPath: /home/kasm-user/Documents
+    - name: shm
+      mountPath: /dev/shm
+    livenessProbe:
+      httpGet:
+        path: /
+        port: 6901
+        scheme: HTTPS
+      initialDelaySeconds: 30
+      periodSeconds: 10
+    readinessProbe:
+      httpGet:
+        path: /
+        port: 6901
+        scheme: HTTPS
+      initialDelaySeconds: 10
+      periodSeconds: 5
+  volumes:
+  - name: workspace-data
+    persistentVolumeClaim:
+      claimName: workspace-${EMPLOYEE_ID}-pvc
+  - name: documents
+    persistentVolumeClaim:
+      claimName: workspace-${EMPLOYEE_ID}-docs-pvc
+  - name: shm
+    emptyDir:
+      medium: Memory
+      sizeLimit: 1Gi
+  restartPolicy: Always
+  dnsPolicy: ClusterFirst
+  terminationGracePeriodSeconds: 30
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: workspace-${EMPLOYEE_ID}-pvc
+  namespace: workspaces
+  labels:
+    app: workspace
+    employee: "${EMPLOYEE_ID}"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: gp2
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: workspace-${EMPLOYEE_ID}-docs-pvc
+  namespace: workspaces
+  labels:
+    app: workspace
+    employee: "${EMPLOYEE_ID}"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: gp2
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: workspace-${EMPLOYEE_ID}-secret
+  namespace: workspaces
+  labels:
+    app: workspace
+    employee: "${EMPLOYEE_ID}"
+type: Opaque
+stringData:
+  vnc-password: "${VNC_PASSWORD}"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: workspace-${EMPLOYEE_ID}-svc
+  namespace: workspaces
+  labels:
+    app: workspace
+    employee: "${EMPLOYEE_ID}"
+spec:
+  type: ClusterIP
+  ports:
+  - name: vnc
+    port: 6901
+    targetPort: 6901
+    protocol: TCP
+  - name: web
+    port: 443
+    targetPort: 443
+    protocol: TCP
+  selector:
+    app: workspace
+    employee: "${EMPLOYEE_ID}"

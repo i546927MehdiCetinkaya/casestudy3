@@ -1,0 +1,478 @@
+# AWS Systems Manager Main Configuration
+# This module provides Intune-like capabilities for workspace management
+# Note: SSM VPC Endpoints are created in the vpc-endpoints module to avoid duplication
+
+# ============================================================================
+# Session Manager Configuration (Remote Access)
+# ============================================================================
+
+# Security Group for workspace instances to use Session Manager
+resource "aws_security_group" "ssm_managed_instances" {
+  count = var.enable_session_manager ? 1 : 0
+
+  name_prefix = "${var.cluster_name}-ssm-managed-"
+  description = "Security group for instances managed by Systems Manager"
+  vpc_id      = var.vpc_id
+
+  # SSM requires outbound HTTPS to VPC endpoints
+  egress {
+    description = "HTTPS to VPC endpoints"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = [data.aws_vpc.selected.cidr_block]
+  }
+
+  tags = merge(var.tags, {
+    Name = "${var.cluster_name}-ssm-managed-sg"
+  })
+}
+
+# Session Manager Preferences
+resource "aws_ssm_document" "session_manager_prefs" {
+  count = var.enable_session_manager ? 1 : 0
+
+  name            = "${var.cluster_name}-session-manager-prefs"
+  document_type   = "Session"
+  document_format = "JSON"
+
+  content = jsonencode({
+    schemaVersion = "1.0"
+    description   = "Session Manager preferences for ${var.cluster_name}"
+    sessionType   = "Standard_Stream"
+    inputs = {
+      s3BucketName                = aws_s3_bucket.session_logs[0].id
+      s3EncryptionEnabled         = true
+      cloudWatchLogGroupName      = aws_cloudwatch_log_group.session_logs[0].name
+      cloudWatchEncryptionEnabled = true
+      idleSessionTimeout          = var.session_timeout_minutes
+      maxSessionDuration          = ""
+      runAsEnabled                = false
+      runAsDefaultUser            = ""
+    }
+  })
+
+  tags = var.tags
+}
+
+# S3 Bucket for Session Logs
+resource "aws_s3_bucket" "session_logs" {
+  count = var.enable_session_manager ? 1 : 0
+
+  bucket_prefix = "ssm-session-logs-"
+
+  tags = merge(var.tags, {
+    Name = "${var.cluster_name}-session-logs"
+  })
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "session_logs" {
+  count = var.enable_session_manager ? 1 : 0
+
+  bucket = aws_s3_bucket.session_logs[0].id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "session_logs" {
+  count = var.enable_session_manager ? 1 : 0
+
+  bucket = aws_s3_bucket.session_logs[0].id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+# CloudWatch Log Group for Session Logs
+resource "aws_cloudwatch_log_group" "session_logs" {
+  count = var.enable_session_manager ? 1 : 0
+
+  name              = "/aws/ssm/${var.cluster_name}/sessions"
+  retention_in_days = 30
+
+  tags = var.tags
+}
+
+# ============================================================================
+# Parameter Store (Secrets Management)
+# ============================================================================
+
+# Workspace default configuration
+resource "aws_ssm_parameter" "workspace_config" {
+  name        = "/${var.cluster_name}/workspace/config"
+  description = "Default workspace configuration"
+  type        = "String"
+  value = jsonencode({
+    cpu_limit    = "2000m"
+    memory_limit = "4Gi"
+    storage      = "10Gi"
+    image        = "workspace-image:latest"
+  })
+
+  tags = merge(var.tags, {
+    Category = "Configuration"
+  })
+}
+
+# JWT Secret (example)
+resource "aws_ssm_parameter" "jwt_secret" {
+  name        = "/${var.cluster_name}/hr-portal/jwt-secret"
+  description = "JWT secret for HR Portal authentication"
+  type        = "SecureString"
+  value       = "REPLACE_WITH_ACTUAL_SECRET" # Should be replaced in production
+
+  tags = merge(var.tags, {
+    Category = "Security"
+  })
+
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
+
+# Database credentials (placeholder)
+resource "aws_ssm_parameter" "db_credentials" {
+  name        = "/${var.cluster_name}/database/credentials"
+  description = "Database connection credentials"
+  type        = "SecureString"
+  value = jsonencode({
+    host   = "dynamodb.${data.aws_region.current.name}.amazonaws.com"
+    region = data.aws_region.current.name
+    table  = "${var.cluster_name}-employees"
+  })
+
+  tags = merge(var.tags, {
+    Category = "Configuration"
+  })
+}
+
+# ============================================================================
+# Workspace Credentials Management (NEW)
+# ============================================================================
+
+# Email configuration for SES
+resource "aws_ssm_parameter" "email_config" {
+  name        = "/${var.cluster_name}/email/config"
+  description = "Email configuration for employee notifications"
+  type        = "String"
+  value = jsonencode({
+    sender_email    = "noreply@innovatech.com"
+    sender_name     = "InnovaTech HR Portal"
+    ses_region      = data.aws_region.current.name
+    template_bucket = "email-templates"
+  })
+
+  tags = merge(var.tags, {
+    Category = "Configuration"
+    Service  = "Email"
+  })
+}
+
+# Workspace domain configuration
+resource "aws_ssm_parameter" "workspace_domain" {
+  name        = "/${var.cluster_name}/workspaces/domain"
+  description = "Public domain for workspace access"
+  type        = "String"
+  value       = var.workspace_domain
+
+  tags = merge(var.tags, {
+    Category = "Configuration"
+    Service  = "Workspaces"
+  })
+}
+
+# NOTE: Email templates are stored in application code (src/services/email.js)
+# SSM Parameter Store does not support {{}} template variables
+
+# ============================================================================
+# Patch Manager Configuration (Automated Updates)
+# ============================================================================
+
+# Patch Baseline for Amazon Linux 2
+resource "aws_ssm_patch_baseline" "workspace_baseline" {
+  count = var.enable_patch_manager ? 1 : 0
+
+  name             = "${var.cluster_name}-workspace-baseline"
+  description      = "Patch baseline for workspace instances"
+  operating_system = "AMAZON_LINUX_2"
+
+  approval_rule {
+    approve_after_days = 7
+    compliance_level   = "CRITICAL"
+
+    patch_filter {
+      key    = "CLASSIFICATION"
+      values = ["Security", "Bugfix", "Enhancement"]
+    }
+
+    patch_filter {
+      key    = "SEVERITY"
+      values = ["Critical", "Important"]
+    }
+  }
+
+  tags = var.tags
+}
+
+# Maintenance Window for Patching
+resource "aws_ssm_maintenance_window" "patch_window" {
+  count = var.enable_patch_manager ? 1 : 0
+
+  name                       = "${var.cluster_name}-patch-window"
+  description                = "Maintenance window for applying patches"
+  schedule                   = var.patch_schedule
+  duration                   = 3
+  cutoff                     = 1
+  allow_unassociated_targets = false
+
+  tags = var.tags
+}
+
+# Maintenance Window Target (all managed instances)
+resource "aws_ssm_maintenance_window_target" "patch_targets" {
+  count = var.enable_patch_manager ? 1 : 0
+
+  window_id     = aws_ssm_maintenance_window.patch_window[0].id
+  name          = "${var.cluster_name}-all-workspaces"
+  description   = "All workspace instances"
+  resource_type = "INSTANCE"
+
+  targets {
+    key    = "tag:Environment"
+    values = [var.cluster_name]
+  }
+}
+
+# Maintenance Window Task (patch)
+resource "aws_ssm_maintenance_window_task" "patch_task" {
+  count = var.enable_patch_manager ? 1 : 0
+
+  window_id        = aws_ssm_maintenance_window.patch_window[0].id
+  name             = "${var.cluster_name}-patch-task"
+  description      = "Apply patches to workspace instances"
+  task_type        = "RUN_COMMAND"
+  task_arn         = "AWS-RunPatchBaseline"
+  priority         = 1
+  service_role_arn = aws_iam_role.maintenance_window[0].arn
+  max_concurrency  = "50%"
+  max_errors       = "25%"
+
+  targets {
+    key    = "WindowTargetIds"
+    values = [aws_ssm_maintenance_window_target.patch_targets[0].id]
+  }
+
+  task_invocation_parameters {
+    run_command_parameters {
+      parameter {
+        name   = "Operation"
+        values = ["Install"]
+      }
+      parameter {
+        name   = "RebootOption"
+        values = ["RebootIfNeeded"]
+      }
+    }
+  }
+}
+
+# ============================================================================
+# State Manager Configuration (Configuration Compliance)
+# ============================================================================
+
+# Association to ensure SSM Agent is running
+resource "aws_ssm_association" "ensure_ssm_agent" {
+  count = var.enable_state_manager ? 1 : 0
+
+  name             = "AWS-UpdateSSMAgent"
+  association_name = "${var.cluster_name}-update-ssm-agent"
+
+  targets {
+    key    = "tag:Environment"
+    values = [var.cluster_name]
+  }
+
+  schedule_expression = "rate(14 days)"
+}
+
+# Association to collect inventory
+resource "aws_ssm_association" "inventory_collection" {
+  count = var.enable_state_manager ? 1 : 0
+
+  name             = "AWS-GatherSoftwareInventory"
+  association_name = "${var.cluster_name}-inventory"
+
+  targets {
+    key    = "tag:Environment"
+    values = [var.cluster_name]
+  }
+
+  schedule_expression = "rate(1 day)"
+
+  parameters = {
+    applications                = "Enabled"
+    awsComponents               = "Enabled"
+    networkConfig               = "Enabled"
+    instanceDetailedInformation = "Enabled"
+  }
+}
+
+# ============================================================================
+# IAM Roles and Policies
+# ============================================================================
+
+# IAM Role for Workspace Instances
+resource "aws_iam_role" "workspace_role" {
+  name_prefix = "workspace-role-"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = {
+        Service = "ec2.amazonaws.com"
+      }
+    }]
+  })
+
+  tags = var.tags
+}
+
+# Attach AWS managed SSM policy
+resource "aws_iam_role_policy_attachment" "workspace_ssm" {
+  role       = aws_iam_role.workspace_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+# Custom policy for Parameter Store access
+resource "aws_iam_role_policy" "workspace_parameter_store" {
+  name_prefix = "parameter-store-"
+  role        = aws_iam_role.workspace_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ssm:GetParameter",
+          "ssm:GetParameters",
+          "ssm:GetParametersByPath"
+        ]
+        Resource = "arn:aws:ssm:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:parameter/${var.cluster_name}/*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "kms:Decrypt"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+# IAM Policy for HR Portal Backend to access SSM and SES
+resource "aws_iam_policy" "hr_portal_ssm_access" {
+  name_prefix = "${var.cluster_name}-hr-portal-ssm-"
+  description = "Allow HR Portal backend to manage workspace credentials in SSM and send emails via SES"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ssm:PutParameter",
+          "ssm:GetParameter",
+          "ssm:GetParameters",
+          "ssm:GetParametersByPath",
+          "ssm:DeleteParameter",
+          "ssm:AddTagsToResource"
+        ]
+        Resource = [
+          "arn:aws:ssm:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:parameter/${var.cluster_name}/workspaces/*",
+          "arn:aws:ssm:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:parameter/${var.cluster_name}/email/*",
+          "arn:aws:ssm:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:parameter/${var.cluster_name}/directory/*"
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "kms:Decrypt",
+          "kms:Encrypt",
+          "kms:GenerateDataKey"
+        ]
+        Resource = "*"
+        Condition = {
+          StringEquals = {
+            "kms:ViaService" = "ssm.${data.aws_region.current.name}.amazonaws.com"
+          }
+        }
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ses:SendEmail",
+          "ses:SendRawEmail"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+
+  tags = var.tags
+}
+
+
+# Instance Profile
+resource "aws_iam_instance_profile" "workspace" {
+  name_prefix = "workspace-profile-"
+  role        = aws_iam_role.workspace_role.name
+
+  tags = var.tags
+}
+
+# IAM Role for Maintenance Window
+resource "aws_iam_role" "maintenance_window" {
+  count = var.enable_patch_manager ? 1 : 0
+
+  name_prefix = "maint-window-role-"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = {
+        Service = "ssm.amazonaws.com"
+      }
+    }]
+  })
+
+  tags = var.tags
+}
+
+resource "aws_iam_role_policy_attachment" "maintenance_window" {
+  count = var.enable_patch_manager ? 1 : 0
+
+  role       = aws_iam_role.maintenance_window[0].name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonSSMMaintenanceWindowRole"
+}
+
+# ============================================================================
+# Data Sources
+# ============================================================================
+
+data "aws_region" "current" {}
+data "aws_caller_identity" "current" {}
+data "aws_vpc" "selected" {
+  id = var.vpc_id
+}

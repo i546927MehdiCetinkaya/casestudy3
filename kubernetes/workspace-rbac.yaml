@@ -1,0 +1,93 @@
+# ServiceAccount for workspace pods
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: workspace-user
+  namespace: workspaces
+  labels:
+    app: workspace
+---
+# Role for workspace pods (minimal permissions)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: workspace-role
+  namespace: workspaces
+rules:
+  # Pods can read their own status
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  # Pods can read secrets in their namespace
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+---
+# RoleBinding for workspace ServiceAccount
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: workspace-rolebinding
+  namespace: workspaces
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: workspace-role
+subjects:
+  - kind: ServiceAccount
+    name: workspace-user
+    namespace: workspaces
+---
+# Network Policy for workspaces (isolation)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: workspace-network-policy
+  namespace: workspaces
+spec:
+  podSelector:
+    matchLabels:
+      type: kasm-workspace
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow VNC access from any pod in cluster (through VPN)
+    - ports:
+        - protocol: TCP
+          port: 6901
+  egress:
+    # Allow DNS
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Allow HTTPS for package updates, git, etc.
+    - ports:
+        - protocol: TCP
+          port: 443
+    # Allow HTTP
+    - ports:
+        - protocol: TCP
+          port: 80
+    # Allow AD/LDAP (for future AD integration)
+    - ports:
+        - protocol: TCP
+          port: 389
+        - protocol: TCP
+          port: 636
+        - protocol: TCP
+          port: 88
+        - protocol: UDP
+          port: 88
+    # Allow access to internal HR Portal
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: hr-portal
+      ports:
+        - protocol: TCP
+          port: 3000
+        - protocol: TCP
+          port: 80
